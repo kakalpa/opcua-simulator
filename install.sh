@@ -9,12 +9,12 @@ echo "Setting up OPC UA Simulator..."
 cd $PROJECT_DIR
 
 # Create virtual environment if it doesn't exist
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
+if [ ! -d "$PROJECT_DIR/venv" ]; then
+    python3 -m venv "$PROJECT_DIR/venv"
 fi
 
-source venv/bin/activate
-pip install -r requirements.txt
+source "$PROJECT_DIR/venv/bin/activate"
+pip install -r "$PROJECT_DIR/requirements.txt"
 
 SERVICE_NAME="opcua-simulator.service"
 SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"

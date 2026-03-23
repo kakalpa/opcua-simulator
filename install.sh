@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-PROJECT_DIR="/home/kalpa/.gemini/antigravity/scratch/opcua-simulator"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CURRENT_USER=$(whoami)
 
 echo "Setting up OPC UA Simulator..."
 
@@ -17,6 +18,23 @@ pip install -r requirements.txt
 
 SERVICE_NAME="opcua-simulator.service"
 SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
+
+echo "Generating systemd service file..."
+cat <<EOF > $SERVICE_NAME
+[Unit]
+Description=OPC UA Simulator Service
+After=network.target
+
+[Service]
+User=$CURRENT_USER
+WorkingDirectory=$PROJECT_DIR
+ExecStart=$PROJECT_DIR/venv/bin/python app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
 
 echo "Installing systemd service (requires sudo)..."
 sudo cp $PROJECT_DIR/$SERVICE_NAME $SERVICE_PATH

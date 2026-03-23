@@ -14,11 +14,14 @@ load_dotenv()
 FLASK_PORT = int(os.environ.get('FLASK_PORT', 8080))
 OPC_UA_PORT = int(os.environ.get('OPC_UA_PORT', 4840))
 
-app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+# Load config relative to script location
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
 
-# Load config
-CONFIG_FILE = 'config.json'
+app = Flask(__name__, 
+            template_folder=os.path.join(BASE_DIR, 'templates'),
+            static_folder=os.path.join(BASE_DIR, 'static'))
+
 if os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE, 'r') as f:
         config = json.load(f)

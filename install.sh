@@ -10,10 +10,17 @@ cd $PROJECT_DIR
 
 # Create virtual environment if it doesn't exist
 if [ ! -d "$PROJECT_DIR/venv" ]; then
-    python3 -m venv "$PROJECT_DIR/venv"
+    echo "Creating virtual environment in $PROJECT_DIR/venv..."
+    if ! python3 -m venv "$PROJECT_DIR/venv"; then
+        echo "Error: Failed to create virtual environment. Ensure 'python3-venv' is installed."
+        exit 1
+    fi
 fi
 
+echo "Activating virtual environment..."
 source "$PROJECT_DIR/venv/bin/activate"
+echo "Installing dependencies from $PROJECT_DIR/requirements.txt..."
+pip install --upgrade pip
 pip install -r "$PROJECT_DIR/requirements.txt"
 
 SERVICE_NAME="opcua-simulator.service"

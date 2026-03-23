@@ -1,0 +1,275 @@
+{
+  "hierarchy": {
+    "PlantA": {
+      "type": "folder",
+      "children": {
+        "Boiler": {
+          "type": "folder",
+          "children": {
+            "Temperature": {
+              "type": "sensor",
+              "datatype": "Double",
+              "unit": "\u00b0C",
+              "sim": {
+                "type": "sin",
+                "min": 20.0,
+                "max": 100.0,
+                "period": 30.0
+              },
+              "min": 55.0,
+              "max": 100.0
+            },
+            "Pressure": {
+              "type": "sensor",
+              "datatype": "Double",
+              "unit": "Bar",
+              "sim": {
+                "type": "random",
+                "min": 0.5,
+                "max": 2.5,
+                "current": 1.8739650352125816
+              }
+            },
+            "ManualValve": {
+              "type": "slider",
+              "datatype": "Double",
+              "unit": "%",
+              "min": 0.0,
+              "max": 100.0,
+              "value": 100.0
+            }
+          }
+        },
+        "CoolingSystem": {
+          "type": "folder",
+          "children": {
+            "PumpStatus": {
+              "type": "switch",
+              "datatype": "Boolean",
+              "value": false
+            },
+            "FlowRate": {
+              "type": "sensor",
+              "datatype": "Double",
+              "unit": "L/s",
+              "sim": {
+                "type": "constant",
+                "value": 0.0
+              }
+            }
+          }
+        },
+        "Line1": {
+          "type": "folder",
+          "children": {
+            "FanSpeed": {
+              "type": "sensor",
+              "value": 0.0,
+              "datatype": "Double",
+              "unit": "RPM",
+              "sim": {
+                "type": "sin",
+                "min": 0.0,
+                "max": 100.0,
+                "period": 10.0,
+                "current": 0.0
+              }
+            }
+          }
+        }
+      }
+    },
+    "TestFolder": {
+      "type": "folder",
+      "children": {}
+    },
+    "DemonstrationPlant": {
+      "type": "folder",
+      "children": {
+        "CoolingTower": {
+          "type": "folder",
+          "children": {
+            "WaterTemp": {
+              "type": "sensor",
+              "datatype": "Double",
+              "unit": "\u00b0C",
+              "sim": {
+                "type": "sin",
+                "min": 20.0,
+                "max": 40.0,
+                "period": 15.0
+              }
+            },
+            "FanStatus": {
+              "type": "switch",
+              "datatype": "Boolean",
+              "value": false
+            }
+          }
+        },
+        "MainBoiler": {
+          "type": "folder",
+          "children": {
+            "Pressure": {
+              "type": "sensor",
+              "datatype": "Double",
+              "unit": "Bar",
+              "sim": {
+                "type": "random",
+                "min": 1.0,
+                "max": 2.5,
+                "current": 1.156804696811558
+              }
+            },
+            "SafetyValve": {
+              "type": "slider",
+              "datatype": "Double",
+              "unit": "%",
+              "min": 0.0,
+              "max": 100.0,
+              "value": 0.0
+            }
+          }
+        }
+      }
+    }
+  },
+  "rules": [
+    {
+      "cause": {
+        "node": "PlantA/CoolingSystem/PumpStatus",
+        "condition": "==",
+        "value": true
+      },
+      "effect": {
+        "node": "PlantA/CoolingSystem/FlowRate",
+        "action": "set_sim",
+        "sim": {
+          "type": "sin",
+          "min": 10.0,
+          "max": 50.0,
+          "period": 10.0
+        }
+      }
+    },
+    {
+      "cause": {
+        "node": "PlantA/CoolingSystem/PumpStatus",
+        "condition": "==",
+        "value": false
+      },
+      "effect": {
+        "node": "PlantA/CoolingSystem/FlowRate",
+        "action": "set_sim",
+        "sim": {
+          "type": "constant",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "cause": {
+        "node": "PlantA/Boiler/ManualValve",
+        "operator": "multiplier",
+        "target": "PlantA/Boiler/Pressure"
+      }
+    },
+    {
+      "cause": {
+        "node": "DemonstrationPlant/CoolingTower/FanStatus",
+        "condition": "==",
+        "value": true
+      },
+      "effect": {
+        "node": "DemonstrationPlant/CoolingTower/WaterTemp",
+        "action": "set_sim",
+        "sim": {
+          "type": "sin",
+          "min": 10.0,
+          "max": 20.0,
+          "period": 10.0
+        }
+      }
+    },
+    {
+      "cause": {
+        "node": "DemonstrationPlant/CoolingTower/FanStatus",
+        "condition": "==",
+        "value": false
+      },
+      "effect": {
+        "node": "DemonstrationPlant/CoolingTower/WaterTemp",
+        "action": "set_sim",
+        "sim": {
+          "type": "sin",
+          "min": 20.0,
+          "max": 40.0,
+          "period": 15.0
+        }
+      }
+    },
+    {
+      "cause": {
+        "node": "DemonstrationPlant/MainBoiler/SafetyValve",
+        "operator": "multiplier",
+        "target": "DemonstrationPlant/MainBoiler/Pressure"
+      }
+    },
+    {
+      "cause": {
+        "node": "DemonstrationPlant/CoolingTower/FanStatus",
+        "condition": "==",
+        "value": true
+      },
+      "effect": {
+        "node": "DemonstrationPlant/CoolingTower/WaterTemp",
+        "action": "set_sim",
+        "sim": {
+          "type": "sin",
+          "min": 10.0,
+          "max": 20.0,
+          "period": 10.0
+        }
+      }
+    },
+    {
+      "cause": {
+        "node": "DemonstrationPlant/CoolingTower/FanStatus",
+        "condition": "==",
+        "value": false
+      },
+      "effect": {
+        "node": "DemonstrationPlant/CoolingTower/WaterTemp",
+        "action": "set_sim",
+        "sim": {
+          "type": "sin",
+          "min": 20.0,
+          "max": 40.0,
+          "period": 15.0
+        }
+      }
+    },
+    {
+      "cause": {
+        "node": "DemonstrationPlant/MainBoiler/SafetyValve",
+        "operator": "multiplier",
+        "target": "DemonstrationPlant/MainBoiler/Pressure"
+      }
+    }
+  ],
+  "alarms": [
+    {
+      "node": "PlantA/Boiler/Temperature",
+      "limit_high": 90.0,
+      "limit_low": 10.0
+    },
+    {
+      "node": "DemonstrationPlant/CoolingTower/WaterTemp",
+      "limit_high": 35.0
+    },
+    {
+      "node": "DemonstrationPlant/CoolingTower/WaterTemp",
+      "limit_high": 35.0
+    }
+  ]
+}

@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OPC UA Simulator Panel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel-bg: #1e293b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --danger: #ef4444;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --card-border: rgba(148, 163, 184, 0.1);
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .header { text-align: center; margin-bottom: 2rem; }
+        .header h1 { margin: 0; font-size: 2.5rem; font-weight: 800; }
+        .header p { margin: 0.5rem 0 0; color: var(--text-muted); }
+        .folder-group {
+            width: 100%;
+            max-width: 1000px;
+            margin-bottom: 2rem;
+        }
+        .folder-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--card-border);
+        }
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            width: 100%;
+        }
+        .card {
+            background: var(--panel-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            position: relative;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        .card.alarm-HIGH, .card.alarm-LOW {
+            border-color: var(--danger);
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+        }
+        .card-title {
+            font-size: 1.1rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 1rem;
+        }
+        .value {
+            font-size: 3rem; font-weight: 800; margin-bottom: 0.5rem; font-variant-numeric: tabular-nums;
+        }
+        .unit { font-size: 1.2rem; color: var(--text-muted); margin-bottom: 0.5rem; }
+        .sim-badge {
+            position: absolute; top: 1rem; right: 1rem;
+            font-size: 0.75rem; font-weight: 600; background: var(--bg); padding: 0.2rem 0.6rem; border-radius: 6px; color: var(--text-muted); text-transform: uppercase; border: 1px solid var(--card-border);
+        }
+        .alarm-badge {
+            position: absolute; top: 1rem; left: 1rem;
+            font-size: 0.75rem; font-weight: 800; background: rgba(239, 68, 68, 0.2); padding: 0.2rem 0.6rem; border-radius: 6px; color: var(--danger); text-transform: uppercase; border: 1px solid var(--danger);
+            display: none;
+        }
+        .card.alarm-HIGH .alarm-badge, .card.alarm-LOW .alarm-badge {
+            display: block;
+        }
+        
+        /* Toggle Switch */
+        .switch { position: relative; display: inline-block; width: 60px; height: 34px; margin-top: 1rem; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--danger); transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--success); }
+        input:checked + .slider:before { transform: translateX(26px); }
+        .status-badge { margin-top: 1rem; padding: 0.5rem 1rem; border-radius: 999px; font-weight: 600; font-size: 0.9rem; background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+        .status-badge.on { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+
+        /* Range Slider */
+        .range-container { width: 100%; display: flex; flex-direction: column; align-items: center; margin-top: 1rem; }
+        .range-slider { -webkit-appearance: none; width: 100%; height: 8px; border-radius: 5px; outline: none; background: #334155; }
+        .range-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); cursor: pointer; border: 2px solid white; }
+
+        .form-section { background: rgba(0,0,0,0.2); border-radius: 8px; padding: 1.5rem; margin-top: 1rem; width: 100%; box-sizing: border-box; }
+        .input-field { width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: white; font-family: inherit; font-size: 1rem; box-sizing: border-box; margin-top: 0.25rem; }
+        .input-field:focus { outline: none; border-color: var(--accent); }
+        .btn { padding: 0.75rem 1.5rem; border-radius: 8px; border: none; background: var(--accent); color: white; font-weight: 600; cursor: pointer; font-size: 1rem; transition: background 0.2s; white-space: nowrap; height: 46px; }
+        .btn-success { background: var(--success); }
+        .btn:hover { opacity: 0.9; }
+        .form-row { display: flex; gap: 1rem; width: 100%; flex-wrap: wrap; margin-bottom: 1rem;}
+        label { color: var(--text-muted); font-size: 0.9rem; }
+
+        .server-status { margin-top: 3rem; padding: 1rem 2rem; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; color: var(--accent); font-size: 0.9rem; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>OPC UA Simulator</h1>
+        <p>Live Configuration-Driven Emulation Dashboard</p>
+    </div>
+
+    <div id="main-container" style="width: 100%; max-width: 1000px; display: flex; flex-direction: column; align-items: center;">
+        <!-- Folders and Cards generated dynamically here -->
+    </div>
+
+    <div class="dashboard" style="margin-top: 2rem; width: 100%; max-width: 1000px;">
+        <div class="card" style="grid-column: 1 / -1; align-items: flex-start; text-align: left;">
+            <div class="card-title" style="display: flex; justify-content: space-between; width: 100%; align-items: center; box-sizing: border-box; margin-bottom: 0;">
+                <span>Live PLC Node Configurator</span>
+                <button id="btn-load-demo" class="btn" style="height: 36px; font-size: 0.85rem; padding: 0 1rem; background: #3b82f6;">Load Demo Plant</button>
+            </div>
+            <p style="margin-top: 1rem; color: var(--text-muted); font-size: 0.9rem;">Instantiate dynamic nodes into the OPC UA address space. Changes are saved to config.json automatically.</p>
+            
+            <div class="form-section">
+                <div class="form-row">
+                    <div style="flex-grow: 1; min-width: 200px;">
+                        <label>Folder (e.g. PlantA/Boiler)</label>
+                        <input type="text" id="new-folder" placeholder="Leave empty for root" class="input-field">
+                    </div>
+                    <div style="flex-grow: 1; min-width: 200px;">
+                        <label>Node Name (e.g., Temp, Valve)</label>
+                        <input type="text" id="new-name" placeholder="Variable Name" class="input-field">
+                    </div>
+                    <div style="width: 180px;">
+                        <label>Node Category</label>
+                        <select id="new-node-type" class="input-field">
+                            <option value="sensor">Math Sensor (Output)</option>
+                            <option value="slider">Analog Slider (Input)</option>
+                            <option value="switch">Digital Switch (Input)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="form-row" id="config-wrap" style="align-items: flex-end; margin-bottom: 0;">
+                    
+                    <!-- Math Sensor Group -->
+                    <div class="param-group config-for-sensor" style="width: 150px; display: block;">
+                        <label>Math Profile</label>
+                        <select id="new-sim-type" class="input-field">
+                            <option value="sin">Sine Wave</option>
+                            <option value="tan">Tangent Wave</option>
+                            <option value="random">Random Walk</option>
+                            <option value="constant">Constant Bias</option>
+                        </select>
+                    </div>
+
+                    <div class="param-group config-for-sensor config-for-slider" style="width: 100px; display: block;">
+                        <label>Unit</label>
+                        <input type="text" id="new-unit" placeholder="Unit" class="input-field">
+                    </div>
+
+                    <div class="param-group config-for-sensor config-for-slider" style="width: 100px; display: block;">
+                        <label id="lbl-min">Min Bounds</label>
+                        <input type="number" id="new-min" value="0" class="input-field">
+                    </div>
+                    
+                    <div class="param-group config-for-sensor config-for-slider" style="width: 100px; display: block;">
+                        <label id="lbl-max">Max Bounds</label>
+                        <input type="number" id="new-max" value="100" class="input-field">
+                    </div>
+
+                    <div class="param-group config-for-sensor" id="grp-period" style="width: 100px; display: block;">
+                        <label>Period (sec)</label>
+                        <input type="number" id="new-period" value="10" class="input-field">
+                    </div>
+                    
+                    <div class="param-group config-for-slider" id="grp-val-analog" style="width: 100px; display: none;">
+                        <label>Initial Value</label>
+                        <input type="number" id="new-val-analog" value="50" class="input-field">
+                    </div>
+
+                    <!-- Digital Switch Group -->
+                    <div class="param-group config-for-switch" style="width: 150px; display: none;">
+                        <label>Initial State</label>
+                        <select id="new-val-digital" class="input-field">
+                            <option value="false">FALSE (0)</option>
+                            <option value="true">TRUE  (1)</option>
+                        </select>
+                    </div>
+                    
+                    <div style="flex-grow: 1; display:flex; justify-content: flex-end;">
+                        <button id="btn-add-sensor" class="btn btn-success">Provision Node</button>
+                    </div>
+                </div>
+                <div id="add-error" style="margin-top: 1rem; font-size: 0.9rem; color: var(--danger); display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="server-status">
+        OPC UA Endpoint: opc.tcp://0.0.0.0:4840/freeopcua/server/
+    </div>
+
+    <script>
+        const mainContainer = document.getElementById('main-container');
+        let isSlidingList = {};
+
+        // Handle Layout Toggles
+        document.getElementById('new-node-type').addEventListener('change', (e) => {
+            const t = e.target.value;
+            document.querySelectorAll('.param-group').forEach(el => el.style.display = 'none');
+            document.querySelectorAll(`.config-for-${t}`).forEach(el => el.style.display = 'block');
+            document.getElementById('new-sim-type').dispatchEvent(new Event('change'));
+        });
+
+        document.getElementById('new-sim-type').addEventListener('change', (e) => {
+            if(document.getElementById('new-node-type').value !== 'sensor') return;
+            const t = e.target.value;
+            if(t === 'constant') { 
+                document.getElementById('grp-period').style.display = 'none'; 
+                document.getElementById('grp-val-analog').style.display = 'block';
+            } else { 
+                document.getElementById('grp-period').style.display = 'block'; 
+                document.getElementById('grp-val-analog').style.display = 'none';
+            }
+        });
+
+        let editingPath = null;
+
+        window.cancelEdit = function() {
+            editingPath = null;
+            document.getElementById('new-name').value = '';
+            document.getElementById('new-name').disabled = false;
+            document.getElementById('new-folder').disabled = false;
+            document.getElementById('new-node-type').disabled = false;
+            
+            const btn = document.getElementById('btn-add-sensor');
+            btn.textContent = 'Provision Node';
+            btn.classList.remove('btn-warning');
+            btn.classList.add('btn-success');
+            
+            const cancelBtn = document.getElementById('btn-cancel-edit');
+            if(cancelBtn) cancelBtn.remove();
+        }
+
+        window.editNode = function(path) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            editingPath = path;
+            const info = window.currentNodesData[path];
+            
+            const parts = path.split('/');
+            document.getElementById('new-name').value = parts.pop();
+            document.getElementById('new-folder').value = parts.join('/');
+            
+            document.getElementById('new-name').disabled = true;
+            document.getElementById('new-folder').disabled = true;
+            document.getElementById('new-node-type').disabled = true;
+            
+            document.getElementById('new-node-type').value = info.type;
+            document.getElementById('new-node-type').dispatchEvent(new Event('change'));
+            
+            if (info.type === 'sensor') {
+                document.getElementById('new-sim-type').value = info.sim_type || 'constant';
+                document.getElementById('new-sim-type').dispatchEvent(new Event('change'));
+            }
+            
+            document.getElementById('new-unit').value = info.unit || '';
+            if (info.min !== undefined) document.getElementById('new-min').value = info.min;
+            if (info.max !== undefined) document.getElementById('new-max').value = info.max;
+            if (info.value !== undefined) document.getElementById('new-val-analog').value = info.value;
+            
+            const btn = document.getElementById('btn-add-sensor');
+            btn.textContent = 'Save Changes';
+            btn.classList.add('btn-warning');
+            btn.classList.remove('btn-success');
+            
+            if(!document.getElementById('btn-cancel-edit')) {
+                const cancelBtn = document.createElement('button');
+                cancelBtn.id = 'btn-cancel-edit';
+                cancelBtn.className = 'btn';
+                cancelBtn.textContent = 'Cancel';
+                cancelBtn.style.marginRight = '0.5rem';
+                cancelBtn.onclick = cancelEdit;
+                btn.parentNode.insertBefore(cancelBtn, btn);
+            }
+        };
+
+        window.deleteNode = async function(path) {
+            if(!confirm("Are you sure you want to delete " + path + "?")) return;
+            try {
+                const res = await fetch('/api/delete_node', {
+                     method: 'POST', headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ path })
+                });
+                const responseData = await res.json();
+                if (!res.ok || !responseData.success) throw new Error(responseData.error || "Failed to delete node.");
+                
+                const safeId = path.replace(/[^a-zA-Z0-9-]/g, '-');
+                const card = document.getElementById(`card-${safeId}`);
+                if(card) card.remove();
+                
+                fetchData();
+            } catch (err) {
+                alert(err.message);
+            }
+        };
+
+        document.getElementById('btn-add-sensor').addEventListener('click', async () => {
+            const folder = document.getElementById('new-folder').value;
+            const name = document.getElementById('new-name').value;
+            const node_type = document.getElementById('new-node-type').value;
+            const unit = document.getElementById('new-unit').value;
+            const sim_type = document.getElementById('new-sim-type').value;
+            const min_val = document.getElementById('new-min').value;
+            const max_val = document.getElementById('new-max').value;
+            const period = document.getElementById('new-period').value;
+            const errDiv = document.getElementById('add-error');
+            const btn = document.getElementById('btn-add-sensor');
+            
+            let val = 0;
+            if(node_type === 'switch') val = document.getElementById('new-val-digital').value === 'true';
+            else if(node_type === 'slider') val = document.getElementById('new-val-analog').value;
+            else if(node_type === 'sensor' && sim_type === 'constant') val = document.getElementById('new-val-analog').value;
+            
+            errDiv.style.display = 'none';
+            if(!name) { errDiv.textContent = "Name is required."; errDiv.style.display = 'block'; return; }
+            
+            btn.textContent = editingPath ? 'Saving...' : 'Provisioning...'; 
+            btn.disabled = true;
+            
+            const endpoint = editingPath ? '/api/edit_node' : '/api/add_node';
+            const reqBody = { 
+                folder, name, node_type, unit, sim_type, 
+                min: min_val, max: max_val, period: period, value: val 
+            };
+            if (editingPath) reqBody.path = editingPath;
+            
+            try {
+                const res = await fetch(endpoint, {
+                     method: 'POST', headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify(reqBody)
+                });
+                const responseData = await res.json();
+                if (!res.ok || !responseData.success) throw new Error(responseData.error || "Failed to provision node.");
+                
+                if (editingPath) cancelEdit();
+                else document.getElementById('new-name').value = '';
+                
+                fetchData();
+            } catch (err) {
+                errDiv.textContent = err.message;
+                errDiv.style.display = 'block';
+            }
+            
+            btn.textContent = 'Provision Node'; btn.disabled = false;
+        });
+
+        document.getElementById('btn-load-demo').addEventListener('click', async () => {
+            const btn = document.getElementById('btn-load-demo');
+            btn.textContent = 'Loading...'; btn.disabled = true;
+            try {
+                const res = await fetch('/api/load_demo', { method: 'POST' });
+                const r = await res.json();
+                if(!r.success) alert(r.error);
+                fetchData();
+            } catch(e) {}
+            btn.textContent = 'Load Demo Plant'; btn.disabled = false;
+        });
+
+        async function fetchData() {
+            try {
+                const res = await fetch('/api/data');
+                const data = await res.json();
+                if (data.error) return;
+                renderDashboard(data);
+            } catch (err) { }
+        }
+
+        function renderDashboard(data) {
+            window.currentNodesData = data;
+            // Group by folder path
+            const grouped = {};
+            for (const [path, info] of Object.entries(data)) {
+                let parts = path.split('/');
+                let nodeName = parts.pop();
+                let folder = parts.join('/') || 'Root';
+                if(!grouped[folder]) grouped[folder] = [];
+                grouped[folder].push({ path, name: nodeName, info });
+            }
+
+            for (const [folder, nodes] of Object.entries(grouped)) {
+                const folderSafeId = 'folder-' + folder.replace(/[^a-zA-Z0-9-]/g, '-');
+                let folderDiv = document.getElementById(folderSafeId);
+                let dashboardDiv;
+                
+                if (!folderDiv) {
+                    folderDiv = document.createElement('div');
+                    folderDiv.className = 'folder-group';
+                    folderDiv.id = folderSafeId;
+                    
+                    const title = document.createElement('div');
+                    title.className = 'folder-title';
+                    title.textContent = folder === 'Root' ? 'Uncategorized Nodes' : folder.replace(/\\/g, ' / ');
+                    folderDiv.appendChild(title);
+                    
+                    dashboardDiv = document.createElement('div');
+                    dashboardDiv.className = 'dashboard';
+                    dashboardDiv.id = `dash-${folderSafeId}`;
+                    folderDiv.appendChild(dashboardDiv);
+                    
+                    mainContainer.appendChild(folderDiv);
+                } else {
+                    dashboardDiv = document.getElementById(`dash-${folderSafeId}`);
+                }
+
+                for (const item of nodes) {
+                    const { path, name, info } = item;
+                    const safeId = path.replace(/[^a-zA-Z0-9-]/g, '-');
+                    let card = document.getElementById(`card-${safeId}`);
+                    
+                    if (!card) {
+                        card = document.createElement('div');
+                        card.className = 'card';
+                        card.id = `card-${safeId}`;
+                        dashboardDiv.appendChild(card);
+                    }
+
+                    // Handle Alarm visual state
+                    card.className = `card alarm-${info.alarm_state}`;
+
+                    if (info.type === 'switch') {
+                        if (!card.innerHTML.includes('switch')) {
+                            card.innerHTML = `
+                                <div class="alarm-badge">ALARM</div>
+                                <div style="position: absolute; top: 1rem; right: 1rem; display: flex; gap: 0.5rem; align-items: center;">
+                                    <div class="sim-badge" style="position: relative; top: 0; right: 0; margin-right: 0.5rem;">DIGITAL</div>
+                                    <button class="btn" title="Edit Node" onclick="editNode('${path}')" style="padding: 0.1rem 0.4rem; height: auto; font-size: 0.8rem; background: var(--panel-bg); color: var(--text-main); border: 1px solid var(--card-border);">✏️</button>
+                                    <button class="btn" title="Delete Node" onclick="deleteNode('${path}')" style="padding: 0.1rem 0.4rem; height: auto; font-size: 0.8rem; background: transparent; color: var(--text-main); border: 1px solid var(--card-border);">🗑️</button>
+                                </div>
+                                <div class="card-title">${name}</div>
+                                <label class="switch">
+                                    <input type="checkbox" id="ctrl-${safeId}">
+                                    <span class="slider"></span>
+                                </label>
+                                <div class="status-badge" id="badge-${safeId}">FALSE</div>
+                            `;
+                            
+                            document.getElementById(`ctrl-${safeId}`).addEventListener('change', (e) => {
+                                fetch('/api/set_value', {
+                                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ name: path, value: e.target.checked })
+                                });
+                                const badge = document.getElementById(`badge-${safeId}`);
+                                if(e.target.checked) { badge.textContent = "TRUE"; badge.classList.add('on'); }
+                                else { badge.textContent = "FALSE"; badge.classList.remove('on'); }
+                            });
+                        }
+                        const chk = document.getElementById(`ctrl-${safeId}`);
+                        const badge = document.getElementById(`badge-${safeId}`);
+                        if (chk && chk.checked !== info.value) {
+                            chk.checked = info.value;
+                            if(info.value) { badge.textContent = "TRUE"; badge.classList.add('on'); }
+                            else { badge.textContent = "FALSE"; badge.classList.remove('on'); }
+                        }
+
+                    } else if (info.type === 'slider') {
+                         if (!card.innerHTML.includes('range-slider')) {
+                            card.innerHTML = `
+                                <div class="alarm-badge">ALARM</div>
+                                <div style="position: absolute; top: 1rem; right: 1rem; display: flex; gap: 0.5rem; align-items: center;">
+                                    <div class="sim-badge" style="position: relative; top: 0; right: 0; margin-right: 0.5rem;">ANALOG</div>
+                                    <button class="btn" title="Edit Node" onclick="editNode('${path}')" style="padding: 0.1rem 0.4rem; height: auto; font-size: 0.8rem; background: var(--panel-bg); color: var(--text-main); border: 1px solid var(--card-border);">✏️</button>
+                                    <button class="btn" title="Delete Node" onclick="deleteNode('${path}')" style="padding: 0.1rem 0.4rem; height: auto; font-size: 0.8rem; background: transparent; color: var(--text-main); border: 1px solid var(--card-border);">🗑️</button>
+                                </div>
+                                <div class="card-title">${name}</div>
+                                <div class="value" id="val-${safeId}">--</div>
+                                <div class="unit">${info.unit}</div>
+                                <div class="range-container">
+                                    <input type="range" id="range-${safeId}" class="range-slider" min="${info.min}" max="${info.max}" step="0.1" value="${info.value}">
+                                </div>
+                            `;
+                            
+                            const range = document.getElementById(`range-${safeId}`);
+                            const valDisplay = document.getElementById(`val-${safeId}`);
+                            
+                            range.addEventListener('input', (e) => {
+                                isSlidingList[safeId] = true;
+                                valDisplay.textContent = parseFloat(e.target.value).toFixed(2);
+                            });
+                            
+                            range.addEventListener('change', (e) => {
+                                fetch('/api/set_value', {
+                                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ name: path, value: parseFloat(e.target.value) })
+                                });
+                                setTimeout(() => { isSlidingList[safeId] = false; }, 1000);
+                            });
+                        }
+                        
+                        if(!isSlidingList[safeId]) {
+                            const valStr = parseFloat(info.value).toFixed(2);
+                            document.getElementById(`val-${safeId}`).textContent = valStr;
+                            document.getElementById(`range-${safeId}`).value = info.value;
+                        }
+                        
+                    } else {
+                        // Sensor
+                        if (!card.innerHTML.includes('sim-badge') || card.innerHTML.includes('DIGITAL') || card.innerHTML.includes('ANALOG')) {
+                            card.innerHTML = `
+                                <div class="alarm-badge">ALARM</div>
+                                <div style="position: absolute; top: 1rem; right: 1rem; display: flex; gap: 0.5rem; align-items: center;">
+                                    <div class="sim-badge" id="sim-badge-${safeId}" style="position: relative; top: 0; right: 0; margin-right: 0.5rem;">${info.sim_type}</div>
+                                    <button class="btn" title="Edit Node" onclick="editNode('${path}')" style="padding: 0.1rem 0.4rem; height: auto; font-size: 0.8rem; background: var(--panel-bg); color: var(--text-main); border: 1px solid var(--card-border);">✏️</button>
+                                    <button class="btn" title="Delete Node" onclick="deleteNode('${path}')" style="padding: 0.1rem 0.4rem; height: auto; font-size: 0.8rem; background: transparent; color: var(--text-main); border: 1px solid var(--card-border);">🗑️</button>
+                                </div>
+                                <div class="card-title">${name}</div>
+                                <div class="value" id="val-${safeId}">--</div>
+                                <div class="unit">${info.unit}</div>
+                            `;
+                        } else {
+                            // Dynamically update the badge without replacing the whole innerHTML
+                            const badgeEl = document.getElementById(`sim-badge-${safeId}`);
+                            if(badgeEl && badgeEl.textContent !== info.sim_type) {
+                                badgeEl.textContent = info.sim_type;
+                            }
+                        }
+                        const valStr = (typeof info.value === 'number') ? info.value.toFixed(2) : info.value;
+                        const valEl = document.getElementById(`val-${safeId}`);
+                        if(valEl) valEl.textContent = valStr;
+                        
+                        // Update alarm text if active
+                        const alarmEl = card.querySelector('.alarm-badge');
+                        if (info.alarm_state === "HIGH") alarmEl.textContent = "HI ALARM";
+                        else if (info.alarm_state === "LOW") alarmEl.textContent = "LO ALARM";
+                    }
+                }
+            }
+        }
+
+        setInterval(fetchData, 1000);
+        fetchData();
+        
+        // Initial setup for UI layout depending on dropdown
+        document.getElementById('new-node-type').dispatchEvent(new Event('change'));
+    </script>
+</body>
+</html>

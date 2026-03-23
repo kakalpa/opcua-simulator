@@ -8,9 +8,11 @@ echo "Setting up OPC UA Simulator..."
 
 cd $PROJECT_DIR
 
-# Create virtual environment if it doesn't exist
-if [ ! -d "$PROJECT_DIR/venv" ]; then
+# Create virtual environment if it doesn't exist or is invalid
+if [ ! -f "$PROJECT_DIR/venv/bin/activate" ]; then
     echo "Creating virtual environment in $PROJECT_DIR/venv..."
+    # Remove potentially broken venv directory
+    rm -rf "$PROJECT_DIR/venv"
     if ! python3 -m venv "$PROJECT_DIR/venv"; then
         echo "Error: Failed to create virtual environment. Ensure 'python3-venv' is installed."
         exit 1

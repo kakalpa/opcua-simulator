@@ -81,13 +81,15 @@ def evaluate_rules_logic():
     # Phase 1: Reset to Base State
     for path, data in nodes.items():
         data["multiplier"] = 1.0
-        if "base_sim" in data and data["type"] == "sensor":
+        # Sensors revert to their base profile
+        if data["type"] == "sensor" and "base_sim" in data:
             current_val = data["sim"].get("current")
-            # Revert to base simulation profile
             data["sim"] = data["base_sim"].copy()
-            # Preserve state across resets
             if current_val is not None:
                 data["sim"]["current"] = current_val
+        # Non-sensors (sliders, switches) clear their logic-applied simulation every cycle
+        elif data["type"] != "sensor":
+            data["sim"] = {}
 
     # Phase 2: Apply Priority-Sorted Rules
     sorted_rules = sorted(rules_config, key=lambda x: x.get("priority", 0))
@@ -184,7 +186,8 @@ async def opcua_server_task():
                     for path in list(nodes.keys()):
                         try:
                             data = nodes.get(path)
-                            if not data or data["type"] != "sensor" or "sim" not in data: 
+                            # Now allow any node with a non-empty 'sim' to be simulated
+                            if not data or not data.get("sim") or not data["sim"].get("type"): 
                                 continue
                                 
                             sim = data["sim"]
@@ -229,8 +232,12 @@ async def opcua_server_task():
                                 sim["current"] = new_val
 
                             if new_val is not None:
-                                await data["node"].write_value(ua.Variant(round(new_val, 3), data["datatype"]))
-                                data["value"] = round(new_val, 3)
+                                final_val = round(new_val, 3)
+                                if data["datatype"] == ua.VariantType.Boolean:
+                                    final_val = bool(final_val) if isinstance(final_val, (int, float)) else final_val
+                                
+                                await data["node"].write_value(ua.Variant(final_val, data["datatype"]))
+                                data["value"] = final_val
                         except Exception as e:
                             logging.error(f"Error simulating node {path}: {e}")
 

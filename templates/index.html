@@ -882,24 +882,33 @@
             }
         }
 
+        let lastNodePaths = "";
         function populateRuleDropdowns(nodesData) {
             const causeSel = document.getElementById('rule-cause-node');
             const effectSel = document.getElementById('rule-effect-node');
+            
+            // Generate a signature of current nodes to detect changes
+            const currentPaths = Object.keys(nodesData).sort();
+            const pathsSignature = currentPaths.join('|') + '|' + currentPaths.map(p => nodesData[p].type).join(',');
+            
+            if (pathsSignature === lastNodePaths) return;
+            lastNodePaths = pathsSignature;
+            
             const cVal = causeSel.value;
             const eVal = effectSel.value;
+            
             causeSel.innerHTML = '';
             effectSel.innerHTML = '';
             
-            for(const path in nodesData) {
+            for(const path of currentPaths) {
                 const opt1 = document.createElement('option');
                 opt1.value = path; opt1.textContent = path;
                 causeSel.appendChild(opt1);
                 
-                if (nodesData[path].type === 'sensor') {
-                    const opt2 = document.createElement('option');
-                    opt2.value = path; opt2.textContent = path;
-                    effectSel.appendChild(opt2);
-                }
+                // Allow all nodes to be effects now, the engine will handle them
+                const opt2 = document.createElement('option');
+                opt2.value = path; opt2.textContent = path;
+                effectSel.appendChild(opt2);
             }
             if(cVal && nodesData[cVal]) causeSel.value = cVal;
             if(eVal && nodesData[eVal]) effectSel.value = eVal;

@@ -331,6 +331,10 @@
                         <label>Period</label>
                         <input type="number" id="rule-sim-period" class="input-field" value="10">
                     </div>
+                    <div style="width: 120px;" id="rule-sim-val-grp">
+                        <label>Value / State</label>
+                        <input type="text" id="rule-sim-val" class="input-field" placeholder="e.g. 50 or true">
+                    </div>
                 </div>
 
                 <div class="form-row" style="justify-content: flex-end; margin-bottom: 0;">
@@ -946,24 +950,33 @@
         });
 
         document.getElementById('rule-sim-type').addEventListener('change', (e) => {
-            if(e.target.value === 'constant') {
-                document.getElementById('rule-sim-period-grp').style.display = 'none';
-                document.getElementById('rule-thermal-grp').style.display = 'none';
-            } else if(e.target.value === 'thermal') {
-                document.getElementById('rule-sim-period-grp').style.display = 'none';
-                document.getElementById('rule-thermal-grp').style.display = 'flex';
-            } else {
-                document.getElementById('rule-sim-period-grp').style.display = 'block';
-                document.getElementById('rule-thermal-grp').style.display = 'none';
-            }
+            const isThermal = e.target.value === 'thermal';
+            const isConstant = e.target.value === 'constant';
+            
+            document.getElementById('rule-sim-period-grp').style.display = (e.target.value === 'sin' || e.target.value === 'tan') ? 'block' : 'none';
+            document.getElementById('rule-thermal-grp').style.display = isThermal ? 'flex' : 'none';
+            document.getElementById('rule-sim-val-grp').style.display = isConstant ? 'block' : 'none';
+            
+            // For constant, hide min/max as they don't apply to a static override
+            document.getElementById('rule-sim-min').parentElement.style.display = isConstant ? 'none' : 'block';
+            document.getElementById('rule-sim-max').parentElement.style.display = isConstant ? 'none' : 'block';
         });
         
         document.getElementById('rule-effect-node').addEventListener('change', (e) => {
             const effectPath = e.target.value;
+            const simTypeSelect = document.getElementById('rule-sim-type');
+            
             if(window.currentNodesData && window.currentNodesData[effectPath]) {
                 const nodeInfo = window.currentNodesData[effectPath];
-                if (nodeInfo.min !== undefined) document.getElementById('rule-sim-min').value = nodeInfo.min;
-                if (nodeInfo.max !== undefined) document.getElementById('rule-sim-max').value = nodeInfo.max;
+                
+                // If it's a switch or slider, default to constant
+                if(nodeInfo.type === 'switch' || nodeInfo.type === 'slider') {
+                    simTypeSelect.value = 'constant';
+                    simTypeSelect.dispatchEvent(new Event('change'));
+                } else {
+                    if (nodeInfo.min !== undefined) document.getElementById('rule-sim-min').value = nodeInfo.min;
+                    if (nodeInfo.max !== undefined) document.getElementById('rule-sim-max').value = nodeInfo.max;
+                }
             }
         });
 
@@ -992,6 +1005,11 @@
                 else if(!isNaN(parseFloat(causeVal))) causeVal = parseFloat(causeVal);
 
                 const simType = document.getElementById('rule-sim-type').value;
+                let ruleSimVal = document.getElementById('rule-sim-val').value;
+                if(ruleSimVal.toLowerCase() === 'true') ruleSimVal = true;
+                else if(ruleSimVal.toLowerCase() === 'false') ruleSimVal = false;
+                else if(!isNaN(parseFloat(ruleSimVal))) ruleSimVal = parseFloat(ruleSimVal);
+
                 ruleObj = {
                     priority: priority,
                     cause: { node: causeNode, condition: condition, value: causeVal },
@@ -999,6 +1017,7 @@
                         node: effectNode, action: "set_sim", 
                         sim: { 
                             type: simType, 
+                            value: ruleSimVal,
                             min: parseFloat(document.getElementById('rule-sim-min').value), 
                             max: parseFloat(document.getElementById('rule-sim-max').value), 
                             period: parseFloat(document.getElementById('rule-sim-period').value),
@@ -1069,6 +1088,7 @@
         
         document.getElementById('new-node-type').dispatchEvent(new Event('change'));
         document.getElementById('rule-condition').dispatchEvent(new Event('change'));
+        document.getElementById('rule-sim-type').dispatchEvent(new Event('change'));
     </script>
 </body>
 </html>

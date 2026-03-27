@@ -139,41 +139,56 @@ async def opcua_server_task():
             
             # Step 1: Read inputs
             for path in list(nodes.keys()):
-                if path not in nodes: continue
-                data = nodes[path]
-                val = await data["node"].read_value()
-                data["value"] = val
+                try:
+                    data = nodes.get(path)
+                    if not data or "node" not in data: continue
+                    val = await data["node"].read_value()
+                    data["value"] = val
+                except Exception as e:
+                    logging.error(f"Error reading node {path}: {e}")
             
             # Step 2: Evaluate logic rules
-            evaluate_rules_logic()
+            try:
+                evaluate_rules_logic()
+            except Exception as e:
+                logging.error(f"Error evaluating rules: {e}")
             
             # Step 3: Run Math Simulations
             for path in list(nodes.keys()):
-                if path not in nodes: continue
-                data = nodes[path]
-                if data["type"] == "sensor" and "sim" in data:
+                try:
+                    data = nodes.get(path)
+                    if not data or data["type"] != "sensor" or "sim" not in data: 
+                        continue
+                        
                     sim = data["sim"]
                     new_val = None
                     multiplier = data.get("multiplier", 1.0)
                     
-                    if sim["type"] == "sin":
-                        amplitude = (sim["max"] - sim["min"]) / 2.0
-                        base = sim["min"] + amplitude
+                    if sim.get("type") == "sin":
+                        amplitude = (sim.get("max", 100.0) - sim.get("min", 0.0)) / 2.0
+                        base = sim.get("min", 0.0) + amplitude
                         period = sim.get("period", 60.0) or 60.0
-                        new_val = base + (amplitude * math.sin(t * 2 * math.pi / period)) * multiplier
-                    elif sim["type"] == "random":
-                        current = sim.get("current", sim["min"])
-                        step = (sim["max"] - sim["min"]) * 0.1
+                        new_val = (base + (amplitude * math.sin(t * 2 * math.pi / period))) * multiplier
+                    elif sim.get("type") == "random":
+                        current = sim.get("current", sim.get("min", 0.0))
+                        step = (sim.get("max", 100.0) - sim.get("min", 0.0)) * 0.1
                         current += random.uniform(-step, step)
-                        current = max(sim["min"], min(current, sim["max"]))
+                        current = max(sim.get("min", 0.0), min(current, sim.get("max", 100.0)))
                         sim["current"] = current
                         new_val = current * multiplier
-                    elif sim["type"] == "constant":
-                        new_val = sim.get("value", data["value"]) * multiplier
+                    elif sim.get("type") == "constant":
+                        new_val = sim.get("value", data.get("value", 0.0)) * multiplier
+                    elif sim.get("type") == "tan":
+                        period = sim.get("period", 60.0) or 60.0
+                        new_val = (math.tan(t * math.pi / period)) * multiplier
+                        # Clamp tan to avoid infinity
+                        new_val = max(-1000.0, min(new_val, 1000.0))
 
                     if new_val is not None:
                         await data["node"].write_value(ua.Variant(round(new_val, 3), data["datatype"]))
                         data["value"] = round(new_val, 3)
+                except Exception as e:
+                    logging.error(f"Error simulating node {path}: {e}")
 
             # Step 4: Check Alarms
             for alarm in alarms_config:
@@ -597,4 +612,4 @@ def load_demo():
         return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=FLASK_PORT, debug=True)
+    app.run(host='0.0.0.0', port=FLASK_PORT, debug=False)

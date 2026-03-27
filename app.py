@@ -82,7 +82,10 @@ def evaluate_rules_logic():
     for path, data in nodes.items():
         data["multiplier"] = 1.0
 
-    for rule in rules_config:
+    # Sort rules by priority (default 0). Higher priority runs last to override.
+    sorted_rules = sorted(rules_config, key=lambda x: x.get("priority", 0))
+
+    for rule in sorted_rules:
         cause = rule.get("cause")
         if not cause or cause["node"] not in nodes:
             continue
@@ -102,6 +105,8 @@ def evaluate_rules_logic():
         if condition == "==": triggered = (cause_val == target_val)
         elif condition == "!=": triggered = (cause_val != target_val)
         elif condition == ">": triggered = (cause_val > target_val)
+        elif condition == "<": triggered = (cause_val < target_val)
+        elif condition == ">=": triggered = (cause_val >= target_val)
         elif condition == "<=": triggered = (cause_val <= target_val)
             
         if triggered:
@@ -112,8 +117,13 @@ def evaluate_rules_logic():
             
             if effect["action"] == "set_sim":
                 current_sim = nodes[effect_path].get("sim", {})
-                if current_sim != effect["sim"]:
-                    nodes[effect_path]["sim"] = effect["sim"].copy()
+                new_sim = effect["sim"]
+                # Only update if the simulation profile has actually changed
+                if current_sim.get("type") != new_sim.get("type") or \
+                   current_sim.get("min") != new_sim.get("min") or \
+                   current_sim.get("max") != new_sim.get("max") or \
+                   current_sim.get("value") != new_sim.get("value"):
+                    nodes[effect_path]["sim"] = new_sim.copy()
 
 async def opcua_server_task():
     global server_obj, namespace_idx, my_evgen
@@ -132,79 +142,89 @@ async def opcua_server_task():
     await build_hierarchy(server_obj, config.get("hierarchy", {}), "")
 
     logging.info(f"Starting OPC UA Server on opc.tcp://0.0.0.0:{OPC_UA_PORT}/freeopcua/server/")
-    async with server:
-        while True:
-            await asyncio.sleep(1.0)
-            t = time.time() - start_time
-            
-            # Step 1: Read inputs
-            for path in list(nodes.keys()):
-                try:
-                    data = nodes.get(path)
-                    if not data or "node" not in data: continue
-                    val = await data["node"].read_value()
-                    data["value"] = val
-                except Exception as e:
-                    logging.error(f"Error reading node {path}: {e}")
-            
-            # Step 2: Evaluate logic rules
-            try:
-                evaluate_rules_logic()
-            except Exception as e:
-                logging.error(f"Error evaluating rules: {e}")
-            
-            # Step 3: Run Math Simulations
-            for path in list(nodes.keys()):
-                try:
-                    data = nodes.get(path)
-                    if not data or data["type"] != "sensor" or "sim" not in data: 
-                        continue
-                        
-                    sim = data["sim"]
-                    new_val = None
-                    multiplier = data.get("multiplier", 1.0)
+    
+    # Retry loop for port binding (handle slow OS release)
+    retries = 5
+    while retries > 0:
+        try:
+            async with server:
+                while True:
+                    await asyncio.sleep(1.0)
+                    t = time.time() - start_time
                     
-                    if sim.get("type") == "sin":
-                        amplitude = (sim.get("max", 100.0) - sim.get("min", 0.0)) / 2.0
-                        base = sim.get("min", 0.0) + amplitude
-                        period = sim.get("period", 60.0) or 60.0
-                        new_val = (base + (amplitude * math.sin(t * 2 * math.pi / period))) * multiplier
-                    elif sim.get("type") == "random":
-                        current = sim.get("current", sim.get("min", 0.0))
-                        step = (sim.get("max", 100.0) - sim.get("min", 0.0)) * 0.1
-                        current += random.uniform(-step, step)
-                        current = max(sim.get("min", 0.0), min(current, sim.get("max", 100.0)))
-                        sim["current"] = current
-                        new_val = current * multiplier
-                    elif sim.get("type") == "constant":
-                        new_val = sim.get("value", data.get("value", 0.0)) * multiplier
-                    elif sim.get("type") == "tan":
-                        period = sim.get("period", 60.0) or 60.0
-                        new_val = (math.tan(t * math.pi / period)) * multiplier
-                        # Clamp tan to avoid infinity
-                        new_val = max(-1000.0, min(new_val, 1000.0))
+                    # Step 1: Read inputs
+                    for path in list(nodes.keys()):
+                        try:
+                            data = nodes.get(path)
+                            if not data or "node" not in data: continue
+                            val = await data["node"].read_value()
+                            data["value"] = val
+                        except Exception as e:
+                            logging.error(f"Error reading node {path}: {e}")
+                    
+                    # Step 2: Evaluate logic rules
+                    try:
+                        evaluate_rules_logic()
+                    except Exception as e:
+                        logging.error(f"Error evaluating rules: {e}")
+                    
+                    # Step 3: Run Math Simulations
+                    for path in list(nodes.keys()):
+                        try:
+                            data = nodes.get(path)
+                            if not data or data["type"] != "sensor" or "sim" not in data: 
+                                continue
+                                
+                            sim = data["sim"]
+                            new_val = None
+                            multiplier = data.get("multiplier", 1.0)
+                            
+                            if sim.get("type") == "sin":
+                                amplitude = (sim.get("max", 100.0) - sim.get("min", 0.0)) / 2.0
+                                base = sim.get("min", 0.0) + amplitude
+                                period = sim.get("period", 60.0) or 60.0
+                                new_val = (base + (amplitude * math.sin(t * 2 * math.pi / period))) * multiplier
+                            elif sim.get("type") == "random":
+                                current = sim.get("current", sim.get("min", 0.0))
+                                step = (sim.get("max", 100.0) - sim.get("min", 0.0)) * 0.1
+                                current += random.uniform(-step, step)
+                                current = max(sim.get("min", 0.0), min(current, sim.get("max", 100.0)))
+                                sim["current"] = current
+                                new_val = current * multiplier
+                            elif sim.get("type") == "constant":
+                                new_val = sim.get("value", data.get("value", 0.0)) * multiplier
+                            elif sim.get("type") == "tan":
+                                period = sim.get("period", 60.0) or 60.0
+                                new_val = (math.tan(t * math.pi / period)) * multiplier
+                                # Clamp tan to avoid infinity
+                                new_val = max(-1000.0, min(new_val, 1000.0))
 
-                    if new_val is not None:
-                        await data["node"].write_value(ua.Variant(round(new_val, 3), data["datatype"]))
-                        data["value"] = round(new_val, 3)
-                except Exception as e:
-                    logging.error(f"Error simulating node {path}: {e}")
+                            if new_val is not None:
+                                await data["node"].write_value(ua.Variant(round(new_val, 3), data["datatype"]))
+                                data["value"] = round(new_val, 3)
+                        except Exception as e:
+                            logging.error(f"Error simulating node {path}: {e}")
 
-            # Step 4: Check Alarms
-            for alarm in alarms_config:
-                path = alarm["node"]
-                if path in nodes:
-                    val = nodes[path]["value"]
-                    if val > alarm.get("limit_high", float('inf')):
-                        if nodes[path]["alarm_state"] != "HIGH":
-                            nodes[path]["alarm_state"] = "HIGH"
-                            await my_evgen.trigger(message=f"High limit exceeded on {path}")
-                    elif val < alarm.get("limit_low", float('-inf')):
-                        if nodes[path]["alarm_state"] != "LOW":
-                            nodes[path]["alarm_state"] = "LOW"
-                            await my_evgen.trigger(message=f"Low limit exceeded on {path}")
-                    else:
-                        nodes[path]["alarm_state"] = "NORMAL"
+                    # Step 4: Check Alarms
+                    for alarm in alarms_config:
+                        path = alarm["node"]
+                        if path in nodes:
+                            val = nodes[path]["value"]
+                            if val > alarm.get("limit_high", float('inf')):
+                                if nodes[path]["alarm_state"] != "HIGH":
+                                    nodes[path]["alarm_state"] = "HIGH"
+                                    await my_evgen.trigger(message=f"High limit exceeded on {path}")
+                            elif val < alarm.get("limit_low", float('-inf')):
+                                if nodes[path]["alarm_state"] != "LOW":
+                                    nodes[path]["alarm_state"] = "LOW"
+                                    await my_evgen.trigger(message=f"Low limit exceeded on {path}")
+                            else:
+                                nodes[path]["alarm_state"] = "NORMAL"
+            break # Exit retry loop on successful startup and normal exit (unlikely)
+        except Exception as e:
+            logging.error(f"Failed to start OPC UA Server (retrying in 2s): {e}")
+            await asyncio.sleep(2.0)
+            retries -= 1
 
 def run_opcua_server():
     asyncio.set_event_loop(loop)
@@ -577,6 +597,28 @@ def delete_rule():
         
     return jsonify({"success": True})
 
+@app.route('/api/update_rules', methods=['POST'])
+def update_rules():
+    global rules_config
+    if server_obj is None or namespace_idx is None:
+        return jsonify({"success": False, "error": "Server not fully initialized"}), 503
+        
+    data = request.json
+    new_rules = data.get("rules")
+    if new_rules is None:
+        return jsonify({"success": False, "error": "Rules list missing"}), 400
+        
+    # Global replacement of rules in config
+    config["rules"] = new_rules
+    
+    # Update the live reference as well (shared with simulation loop)
+    rules_config[:] = new_rules
+    
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
+        
+    return jsonify({"success": True})
+
 
 @app.route('/api/load_demo', methods=['POST'])
 def load_demo():
@@ -612,4 +654,4 @@ def load_demo():
         return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=FLASK_PORT, debug=False)
+    app.run(host='0.0.0.0', port=FLASK_PORT, debug=True, use_reloader=False)

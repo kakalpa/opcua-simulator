@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OPC UA Simulator Panel</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <style>
         :root {
             --bg: #0f172a;
@@ -111,6 +112,15 @@
         label { color: var(--text-muted); font-size: 0.9rem; }
 
         .server-status { margin-top: 3rem; padding: 1rem 2rem; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; color: var(--accent); font-size: 0.9rem; font-family: monospace; }
+        
+        .rule-group-plant { margin-bottom: 2rem; padding: 1.5rem; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid var(--card-border); }
+        .rule-group-node { margin-bottom: 1rem; }
+        .rule-group-header { font-size: 0.85rem; font-weight: 800; color: var(--accent); text-transform: uppercase; margin-bottom: 1rem; border-bottom: 1px solid rgba(59, 130, 246, 0.2); padding-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
+        .rule-item { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: var(--panel-bg); border: 1px solid var(--card-border); border-radius: 8px; font-size: 0.9rem; cursor: default; transition: background 0.2s; margin-bottom: 0.5rem; }
+        .rule-item:hover { background: #2d3e50; }
+        .rule-drag-handle { cursor: grab; color: var(--text-muted); padding-right: 0.75rem; font-size: 1.2rem; }
+        .rule-drag-handle:active { cursor: grabbing; }
+        .sortable-ghost { opacity: 0.4; border: 1px dashed var(--accent); }
     </style>
 </head>
 <body>
@@ -228,6 +238,8 @@
                             <option value="==">Equals (==)</option>
                             <option value="!=">Not Equals (!=)</option>
                             <option value=">">Greater than (>)</option>
+                            <option value=">=">Greater/Equal (>=)</option>
+                            <option value="<">Less than (<)</option>
                             <option value="<=">Less/Equal (<=)</option>
                             <option value="multiplier">Use as Multiplier</option>
                         </select>
@@ -235,6 +247,10 @@
                     <div style="width: 150px;" id="rule-cause-val-grp">
                         <label>Target Value</label>
                         <input type="text" id="rule-cause-val" class="input-field" placeholder="e.g. true or 50">
+                    </div>
+                    <div style="width: 100px;">
+                        <label>Priority</label>
+                        <input type="number" id="rule-priority" class="input-field" value="0" title="Higher priority overrides lower ones">
                     </div>
                 </div>
 
@@ -641,15 +657,15 @@
         
         function getReadableRule(rule) {
             try {
-                if (!rule || !rule.cause) return "Malformed rule";
-                let str = `<strong style="color:var(--accent)">CAUSE:</strong> ${rule.cause.node} `;
+                let str = `<span class="priority-pill" style="background:var(--accent); color:white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; margin-right: 8px;">P${rule.priority || 0}</span> `;
+                str += `<strong style="color:var(--accent)">CAUSE:</strong> ${rule.cause.node} `;
                 if (rule.cause.operator === "multiplier") {
                     str += ` acts as a <strong style="color:var(--warning)">Multiplier</strong> on ${rule.cause.target}`;
                 } else {
-                    str += `${rule.cause.condition} ${rule.cause.value} => <strong style="color:var(--accent)">EFFECT:</strong> `;
+                    str += `<span style="color:var(--warning)">${rule.cause.condition}</span> ${rule.cause.value} => <strong style="color:var(--accent)">EFFECT:</strong> `;
                     if(rule.effect && rule.effect.action === "set_sim") {
                         const s = rule.effect.sim;
-                        str += `SET ${rule.effect.node} to [${s.type}](min:${s.min||0}, max:${s.max||0}, period:${s.period||0})`;
+                        str += `SET ${rule.effect.node} to [${s.type}](min:${s.min||0}, max:${s.max||0})`;
                     }
                 }
                 return str;
@@ -663,20 +679,114 @@
                 container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.9rem;">No active rules.</div>';
                 return;
             }
-            loadedRules.forEach((rule, idx) => {
-                const item = document.createElement('div');
-                item.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 0.9rem;";
-                item.innerHTML = `
-                    <div style="word-break: break-all; margin-right: 1rem;">${getReadableRule(rule)}</div>
-                    <button class="btn btn-delete-rule" style="background:var(--danger); padding: 0.4rem 0.8rem; height: auto; font-size: 0.85rem;" data-index="${idx}">Delete</button>
-                `;
-                container.appendChild(item);
+
+            // Group rules by Effect Node
+            const groups = {};
+            loadedRules.forEach((rule, originalIdx) => {
+                let effectPath = "Unknown";
+                if (rule.cause && rule.cause.operator === "multiplier") effectPath = rule.cause.target;
+                else if (rule.effect) effectPath = rule.effect.node;
+                
+                const parts = effectPath.split('/');
+                const plant = parts[0] || "Root";
+                
+                if (!groups[plant]) groups[plant] = {};
+                if (!groups[plant][effectPath]) groups[plant][effectPath] = [];
+                groups[plant][effectPath].push({ rule, originalIdx });
             });
-            
-            // Re-attach listeners explicitly instead of inline onclick for reliability
+
+            // Iterate over Plants and rendered Nested Sections
+            for (const [plantName, nodes] of Object.entries(groups)) {
+                const plantDiv = document.createElement('div');
+                plantDiv.className = 'rule-group-plant';
+                plantDiv.innerHTML = `<div class="rule-group-header" style="color:var(--text-muted); font-size: 0.75rem; border:none; margin-bottom: 0.5rem;">🏭 PLANT: ${plantName}</div>`;
+                
+                for (const [nodePath, nodeRules] of Object.entries(nodes)) {
+                    const nodeGroup = document.createElement('div');
+                    nodeGroup.className = 'rule-group-node';
+                    nodeGroup.innerHTML = `<div class="rule-group-header">📍 NODE: ${nodePath.split('/').pop()} <span style="font-weight:400; font-size:0.7rem; color:var(--text-muted)">(${nodePath})</span></div>`;
+                    
+                    const listDiv = document.createElement('div');
+                    listDiv.className = 'sortable-rule-list';
+                    listDiv.dataset.node = nodePath;
+                    
+                    // Priority sorting within the group for initial display
+                    nodeRules.sort((a, b) => (b.rule.priority || 0) - (a.rule.priority || 0));
+
+                    nodeRules.forEach(({ rule, originalIdx }) => {
+                        const item = document.createElement('div');
+                        item.className = 'rule-item';
+                        item.dataset.originalIdx = originalIdx;
+                        item.innerHTML = `
+                            <div style="display: flex; align-items: center; flex-grow:1; width:0;">
+                                <div class="rule-drag-handle">⋮⋮</div>
+                                <div style="word-break: break-all; margin-right: 1rem;">${getReadableRule(rule)}</div>
+                            </div>
+                            <button class="btn btn-delete-rule" style="background:var(--danger); padding: 0.4rem 0.8rem; height: auto; font-size: 0.85rem;" data-index="${originalIdx}">Delete</button>
+                        `;
+                        listDiv.appendChild(item);
+                    });
+                    
+                    nodeGroup.appendChild(listDiv);
+                    plantDiv.appendChild(nodeGroup);
+                    
+                    // Initialize Sortable for this specific node group
+                    new Sortable(listDiv, {
+                        handle: '.rule-drag-handle',
+                        ghostClass: 'sortable-ghost',
+                        animation: 150,
+                        onEnd: function() {
+                            syncPrioritiesFromGUI();
+                        }
+                    });
+                }
+                container.appendChild(plantDiv);
+            }
+
+            // Re-attach delete listeners
             document.querySelectorAll('.btn-delete-rule').forEach(btn => {
                 btn.onclick = () => deleteRule(parseInt(btn.getAttribute('data-index')));
             });
+        }
+
+        async function syncPrioritiesFromGUI() {
+            // Re-calculate ALL priorities based on visual order across all groups
+            // In our system, the BOTTOM item has the HIGHEST priority (runs last)
+            
+            // Collect rules in visual order
+            const newOrderedRules = [];
+            // We'll iterate the DOM structure to gather rules globally
+            const plantGroups = document.querySelectorAll('.rule-group-plant');
+            
+            // To ensure consistency, we'll build a fresh list of rules from the current state
+            // But we need to update the.priority field based on position within each node group.
+            
+            const allItems = [];
+            document.querySelectorAll('.sortable-rule-list').forEach(list => {
+                const nodeItems = Array.from(list.querySelectorAll('.rule-item'));
+                // Reverse iterate: deepest in UI = highest priority (last executed)
+                nodeItems.reverse().forEach((item, pIdx) => {
+                    const originalRule = loadedRules[parseInt(item.dataset.originalIdx)];
+                    originalRule.priority = pIdx * 10; // Simple priority spacing
+                    allItems.push(originalRule);
+                });
+            });
+            
+            // Note: Rules that weren't in any list (shouldn't happen) are kept
+            // Actually, we should just update loadedRules and send it.
+            
+            try {
+                const res = await fetch('/api/update_rules', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rules: loadedRules })
+                });
+                const data = await res.json();
+                if(data.success) {
+                    // Update P-labels locally without full re-render if possible
+                    // Actually, re-render is safer to ensure sync.
+                    await fetchRules();
+                }
+            } catch(e) {}
         }
         
         window.deleteRule = async function(idx) {
@@ -771,9 +881,14 @@
             const condition = document.getElementById('rule-condition').value;
             const effectNode = document.getElementById('rule-effect-node').value;
             
+            const priority = parseInt(document.getElementById('rule-priority').value) || 0;
+            
             let ruleObj = {};
             if (condition === "multiplier") {
-                ruleObj = { cause: { node: causeNode, operator: "multiplier", target: effectNode } };
+                ruleObj = { 
+                    priority: priority,
+                    cause: { node: causeNode, operator: "multiplier", target: effectNode } 
+                };
             } else {
                 let causeVal = document.getElementById('rule-cause-val').value;
                 if(causeVal.toLowerCase() === 'true') causeVal = true;
@@ -782,6 +897,7 @@
 
                 const simType = document.getElementById('rule-sim-type').value;
                 ruleObj = {
+                    priority: priority,
                     cause: { node: causeNode, condition: condition, value: causeVal },
                     effect: { 
                         node: effectNode, action: "set_sim", 

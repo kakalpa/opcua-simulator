@@ -207,6 +207,86 @@
         </div>
     </div>
 
+    <!-- Node Relationships Configurator -->
+    <div class="dashboard" style="margin-top: 2rem; width: 100%; max-width: 1000px;" id="relationships-dashboard">
+        <div class="card" style="grid-column: 1 / -1; align-items: flex-start; text-align: left;">
+            <div class="card-title" style="display: flex; justify-content: space-between; width: 100%; align-items: center; box-sizing: border-box; margin-bottom: 0;">
+                <span>Node Relationships Configurator</span>
+            </div>
+            <p style="margin-top: 1rem; color: var(--text-muted); font-size: 0.9rem;">Define how nodes influence each other (e.g., If Fan is FALSE -> Water Temp rises).</p>
+            
+            <div class="form-section">
+                <!-- Add rule form -->
+                <div class="form-row" style="align-items: flex-end;">
+                    <div style="flex-grow: 1; min-width: 200px;">
+                        <label>Cause Node</label>
+                        <select id="rule-cause-node" class="input-field"></select>
+                    </div>
+                    <div style="width: 180px;">
+                        <label>Condition / Operator</label>
+                        <select id="rule-condition" class="input-field">
+                            <option value="==">Equals (==)</option>
+                            <option value="!=">Not Equals (!=)</option>
+                            <option value=">">Greater than (>)</option>
+                            <option value="<=">Less/Equal (<=)</option>
+                            <option value="multiplier">Use as Multiplier</option>
+                        </select>
+                    </div>
+                    <div style="width: 150px;" id="rule-cause-val-grp">
+                        <label>Target Value</label>
+                        <input type="text" id="rule-cause-val" class="input-field" placeholder="e.g. true or 50">
+                    </div>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end;" id="rule-effect-grp">
+                    <div style="flex-grow: 1; min-width: 200px;">
+                        <label>Effect Node</label>
+                        <select id="rule-effect-node" class="input-field"></select>
+                    </div>
+                    <div style="width: 150px;">
+                        <label>Action</label>
+                        <select id="rule-action" class="input-field" disabled>
+                            <option value="set_sim">Set Simulation</option>
+                        </select>
+                    </div>
+                    <div style="width: 150px;">
+                        <label>Sim Type</label>
+                        <select id="rule-sim-type" class="input-field">
+                            <option value="sin">Sine Wave</option>
+                            <option value="random">Random Walk</option>
+                            <option value="constant">Constant Bias</option>
+                        </select>
+                    </div>
+                    <div style="width: 100px;">
+                        <label>Min</label>
+                        <input type="number" id="rule-sim-min" class="input-field" value="0">
+                    </div>
+                    <div style="width: 100px;">
+                        <label>Max</label>
+                        <input type="number" id="rule-sim-max" class="input-field" value="100">
+                    </div>
+                    <div style="width: 100px;" id="rule-sim-period-grp">
+                        <label>Period</label>
+                        <input type="number" id="rule-sim-period" class="input-field" value="10">
+                    </div>
+                </div>
+
+                <div class="form-row" style="justify-content: flex-end; margin-bottom: 0;">
+                    <button id="btn-add-rule" class="btn btn-success">Add Logic Rule</button>
+                </div>
+                <div id="rule-add-error" style="margin-top: 1rem; font-size: 0.9rem; color: var(--danger); display: none;"></div>
+            </div>
+
+            <!-- List of existing rules -->
+            <div style="width: 100%; margin-top: 2rem;">
+                <div class="folder-title" style="font-size: 1rem; border-color: rgba(255,255,255,0.1)">Active Logic Rules</div>
+                <div id="rules-list" style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                    <!-- rules rendered here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="server-status">
         OPC UA Endpoint: opc.tcp://0.0.0.0:4840/freeopcua/server/
     </div>
@@ -388,6 +468,7 @@
 
         function renderDashboard(data) {
             window.currentNodesData = data;
+            populateRuleDropdowns(data);
             // Group by folder path
             const grouped = {};
             for (const [path, info] of Object.entries(data)) {
@@ -547,11 +628,194 @@
             }
         }
 
-        setInterval(fetchData, 1000);
-        fetchData();
+        /* Rules Logic Handlers */
+        let loadedRules = [];
         
-        // Initial setup for UI layout depending on dropdown
+        async function fetchRules() {
+            try {
+                const res = await fetch('/api/rules');
+                loadedRules = await res.json();
+                renderRulesList();
+            } catch(e) {}
+        }
+        
+        function getReadableRule(rule) {
+            try {
+                if (!rule || !rule.cause) return "Malformed rule";
+                let str = `<strong style="color:var(--accent)">CAUSE:</strong> ${rule.cause.node} `;
+                if (rule.cause.operator === "multiplier") {
+                    str += ` acts as a <strong style="color:var(--warning)">Multiplier</strong> on ${rule.cause.target}`;
+                } else {
+                    str += `${rule.cause.condition} ${rule.cause.value} => <strong style="color:var(--accent)">EFFECT:</strong> `;
+                    if(rule.effect && rule.effect.action === "set_sim") {
+                        const s = rule.effect.sim;
+                        str += `SET ${rule.effect.node} to [${s.type}](min:${s.min||0}, max:${s.max||0}, period:${s.period||0})`;
+                    }
+                }
+                return str;
+            } catch(e) { return "Error parsing rule"; }
+        }
+
+        function renderRulesList() {
+            const container = document.getElementById('rules-list');
+            container.innerHTML = '';
+            if(!loadedRules || loadedRules.length === 0) {
+                container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.9rem;">No active rules.</div>';
+                return;
+            }
+            loadedRules.forEach((rule, idx) => {
+                const item = document.createElement('div');
+                item.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 0.9rem;";
+                item.innerHTML = `
+                    <div style="word-break: break-all; margin-right: 1rem;">${getReadableRule(rule)}</div>
+                    <button class="btn btn-delete-rule" style="background:var(--danger); padding: 0.4rem 0.8rem; height: auto; font-size: 0.85rem;" data-index="${idx}">Delete</button>
+                `;
+                container.appendChild(item);
+            });
+            
+            // Re-attach listeners explicitly instead of inline onclick for reliability
+            document.querySelectorAll('.btn-delete-rule').forEach(btn => {
+                btn.onclick = () => deleteRule(parseInt(btn.getAttribute('data-index')));
+            });
+        }
+        
+        window.deleteRule = async function(idx) {
+            console.log("Attempting to delete rule at index:", idx);
+            try {
+                const res = await fetch('/api/delete_rule', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ index: idx })
+                });
+                const data = await res.json();
+                console.log("Delete response:", data);
+                if(!data.success) {
+                    alert("Error deleting rule: " + data.error);
+                }
+                // Fetch immediately
+                await fetchRules();
+            } catch(e) { 
+                console.error("Delete failed:", e); 
+            }
+        }
+
+        function populateRuleDropdowns(nodesData) {
+            const causeSel = document.getElementById('rule-cause-node');
+            const effectSel = document.getElementById('rule-effect-node');
+            const cVal = causeSel.value;
+            const eVal = effectSel.value;
+            causeSel.innerHTML = '';
+            effectSel.innerHTML = '';
+            
+            for(const path in nodesData) {
+                const opt1 = document.createElement('option');
+                opt1.value = path; opt1.textContent = path;
+                causeSel.appendChild(opt1);
+                
+                if (nodesData[path].type === 'sensor') {
+                    const opt2 = document.createElement('option');
+                    opt2.value = path; opt2.textContent = path;
+                    effectSel.appendChild(opt2);
+                }
+            }
+            if(cVal && nodesData[cVal]) causeSel.value = cVal;
+            if(eVal && nodesData[eVal]) effectSel.value = eVal;
+        }
+
+        document.getElementById('rule-condition').addEventListener('change', (e) => {
+            if(e.target.value === 'multiplier') {
+                document.getElementById('rule-cause-val-grp').style.display = 'none';
+                document.getElementById('rule-effect-grp').style.display = 'flex';
+                document.getElementById('rule-action').style.display = 'none';
+                document.getElementById('rule-action').parentElement.style.display = 'none';
+                document.getElementById('rule-sim-type').parentElement.style.display = 'none';
+                document.getElementById('rule-sim-min').parentElement.style.display = 'none';
+                document.getElementById('rule-sim-max').parentElement.style.display = 'none';
+                document.getElementById('rule-sim-period-grp').style.display = 'none';
+            } else {
+                document.getElementById('rule-cause-val-grp').style.display = 'block';
+                document.getElementById('rule-effect-grp').style.display = 'flex';
+                document.getElementById('rule-action').style.display = 'block';
+                document.getElementById('rule-action').parentElement.style.display = 'block';
+                document.getElementById('rule-sim-type').parentElement.style.display = 'block';
+                document.getElementById('rule-sim-min').parentElement.style.display = 'block';
+                document.getElementById('rule-sim-max').parentElement.style.display = 'block';
+                document.getElementById('rule-sim-period-grp').style.display = 'block';
+                document.getElementById('rule-sim-type').dispatchEvent(new Event('change'));
+            }
+        });
+
+        document.getElementById('rule-sim-type').addEventListener('change', (e) => {
+            if(e.target.value === 'constant') {
+                document.getElementById('rule-sim-period-grp').style.display = 'none';
+            } else {
+                document.getElementById('rule-sim-period-grp').style.display = 'block';
+            }
+        });
+        
+        document.getElementById('rule-effect-node').addEventListener('change', (e) => {
+            const effectPath = e.target.value;
+            if(window.currentNodesData && window.currentNodesData[effectPath]) {
+                const nodeInfo = window.currentNodesData[effectPath];
+                if (nodeInfo.min !== undefined) document.getElementById('rule-sim-min').value = nodeInfo.min;
+                if (nodeInfo.max !== undefined) document.getElementById('rule-sim-max').value = nodeInfo.max;
+            }
+        });
+
+        document.getElementById('btn-add-rule').addEventListener('click', async () => {
+            const errDiv = document.getElementById('rule-add-error');
+            errDiv.style.display = 'none';
+            const btn = document.getElementById('btn-add-rule');
+            btn.disabled = true; btn.textContent = 'Adding...';
+            
+            const causeNode = document.getElementById('rule-cause-node').value;
+            const condition = document.getElementById('rule-condition').value;
+            const effectNode = document.getElementById('rule-effect-node').value;
+            
+            let ruleObj = {};
+            if (condition === "multiplier") {
+                ruleObj = { cause: { node: causeNode, operator: "multiplier", target: effectNode } };
+            } else {
+                let causeVal = document.getElementById('rule-cause-val').value;
+                if(causeVal.toLowerCase() === 'true') causeVal = true;
+                else if(causeVal.toLowerCase() === 'false') causeVal = false;
+                else if(!isNaN(parseFloat(causeVal))) causeVal = parseFloat(causeVal);
+
+                const simType = document.getElementById('rule-sim-type').value;
+                ruleObj = {
+                    cause: { node: causeNode, condition: condition, value: causeVal },
+                    effect: { 
+                        node: effectNode, action: "set_sim", 
+                        sim: { 
+                            type: simType, 
+                            min: parseFloat(document.getElementById('rule-sim-min').value), 
+                            max: parseFloat(document.getElementById('rule-sim-max').value), 
+                            period: parseFloat(document.getElementById('rule-sim-period').value) 
+                        } 
+                    }
+                };
+            }
+            
+            try {
+                const res = await fetch('/api/add_rule', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rule: ruleObj })
+                });
+                const r = await res.json();
+                if(!r.success) throw new Error(r.error || "Failed to add rule");
+                await fetchRules();
+            } catch(e) {
+                errDiv.textContent = e.message; errDiv.style.display = 'block';
+            }
+            btn.disabled = false; btn.textContent = 'Add Logic Rule';
+        });
+
+        setInterval(fetchData, 1000);
+        setInterval(fetchRules, 5000);
+        fetchData();
+        fetchRules();
+        
         document.getElementById('new-node-type').dispatchEvent(new Event('change'));
+        document.getElementById('rule-condition').dispatchEvent(new Event('change'));
     </script>
 </body>
 </html>

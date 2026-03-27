@@ -28,10 +28,14 @@ if os.path.exists(CONFIG_FILE):
 else:
     config = {"hierarchy": {}, "rules": [], "alarms": []}
 
+# Ensure rules and alarms are initialized correctly
+if "rules" not in config: config["rules"] = []
+if "alarms" not in config: config["alarms"] = []
+
 nodes = {} # Key: "Folder/NodeName"
 folders_cache = {} # Key: "Folder/Path"
-alarms_config = config.get("alarms", [])
-rules_config = config.get("rules", [])
+alarms_config = config["alarms"]
+rules_config = config["rules"]
 
 loop = asyncio.new_event_loop()
 start_time = time.time()
@@ -107,8 +111,8 @@ def evaluate_rules_logic():
             effect_path = effect["node"]
             
             if effect["action"] == "set_sim":
-                current_sim_type = nodes[effect_path].get("sim", {}).get("type")
-                if current_sim_type != effect["sim"]["type"]:
+                current_sim = nodes[effect_path].get("sim", {})
+                if current_sim != effect["sim"]:
                     nodes[effect_path]["sim"] = effect["sim"].copy()
 
 async def opcua_server_task():
@@ -512,6 +516,52 @@ def delete_node():
     del nodes[path]
     return jsonify({"success": True})
 
+@app.route('/api/rules', methods=['GET'])
+def get_rules():
+    return jsonify(rules_config)
+
+@app.route('/api/add_rule', methods=['POST'])
+def add_rule():
+    if server_obj is None or namespace_idx is None:
+        return jsonify({"success": False, "error": "Server not fully initialized"}), 503
+        
+    data = request.json
+    new_rule = data.get("rule")
+    if not new_rule:
+        return jsonify({"success": False, "error": "Rule data missing"}), 400
+        
+    if "rules" not in config:
+        config["rules"] = []
+    
+    config["rules"].append(new_rule)
+    if rules_config is not config["rules"]:
+        rules_config.append(new_rule)
+        
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
+        
+    return jsonify({"success": True})
+
+@app.route('/api/delete_rule', methods=['POST'])
+def delete_rule():
+    if server_obj is None or namespace_idx is None:
+        return jsonify({"success": False, "error": "Server not fully initialized"}), 503
+        
+    data = request.json
+    index = data.get("index")
+    if index is None or index < 0 or index >= len(rules_config):
+        return jsonify({"success": False, "error": "Invalid rule index"}), 400
+        
+    if "rules" in config and index < len(config["rules"]):
+        config["rules"].pop(index)
+    if rules_config is not config.get("rules"):
+        rules_config.pop(index)
+        
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
+        
+    return jsonify({"success": True})
+
 
 @app.route('/api/load_demo', methods=['POST'])
 def load_demo():
@@ -531,11 +581,13 @@ def load_demo():
         
         # Injection succeeded, save to config
         config["hierarchy"]["DemonstrationPlant"] = DEMO_DATA["children"]["DemonstrationPlant"]
+        
+        # Avoid duplication if rules/alarms_config are the same objects as config lists
         config["rules"].extend(DEMO_RULES)
         config["alarms"].extend(DEMO_ALARMS)
         
-        rules_config.extend(DEMO_RULES)
-        alarms_config.extend(DEMO_ALARMS)
+        # If they were somehow already the same list, we don't need to extend twice.
+        # But we already did extend config["rules"] which IS rules_config.
         
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
@@ -545,4 +597,4 @@ def load_demo():
         return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=FLASK_PORT)
+    app.run(host='0.0.0.0', port=FLASK_PORT, debug=True)

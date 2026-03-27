@@ -12,8 +12,11 @@ This digital twin environment allows you to emulate complex hierarchical PLC tag
   - `Tangent Wave`
   - `Random Walk`
   - `Constant Bias`
-- **Rule Engine**: Define trigger-and-effect rules that allow components to react to each other logically.
-- **Dashboard UI**: Real-time graphical visualization of tags, node structures, and live alarms.
+- **Rule Engine & Node Relationships**: Define complex logic rules directly from the GUI to link node behaviors:
+  - **Causal Logic**: Trigger simulation changes on one node (Effect) based on the state or value of another (Cause).
+  - **Multiplier Logic**: Link an analog slider (e.g., a Valve) to act as a direct percentage multiplier on a sensor's output (e.g., Pressure).
+  - **Real-time Configuration**: Add or delete these relationships live without code changes or restarts.
+- **Dashboard UI**: Real-time graphical visualization of tags, node structures, and live configuration panels for nodes and relationships.
 
 ## Prerequisites
 

@@ -1,0 +1,105 @@
+<svg id="fuxa_conveyor_01" width="300" height="100" viewBox="0 0 300 100" xmlns="http://www.w3.org/2000/svg">
+    <!-- Style for animations -->
+    <style>
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .roller {
+            transform-origin: center;
+            animation: rotate 2s linear infinite;
+            animation-play-state: paused;
+        }
+        .belt-bg {
+            fill: #2c3e50;
+            stroke: #34495e;
+            stroke-width: 2;
+        }
+        .roller-body {
+            fill: #bdc3c7;
+            stroke: #7f8c8d;
+            stroke-width: 2;
+        }
+        .roller-hole {
+            fill: #34495e;
+        }
+        .package-rect {
+            fill: #3498db;
+            stroke: #2980b9;
+            stroke-width: 1;
+            transition: fill 0.3s;
+        }
+    </style>
+
+    <!-- Conveyor Frame -->
+    <rect x="10" y="40" width="280" height="20" rx="10" class="belt-bg" />
+    
+    <!-- Left Roller -->
+    <g class="roller" id="roller-left" style="transform-origin: 25px 50px;">
+        <circle cx="25" cy="50" r="12" class="roller-body" />
+        <circle cx="25" cy="42" r="2" class="roller-hole" />
+        <circle cx="25" cy="58" r="2" class="roller-hole" />
+        <circle cx="33" cy="50" r="2" class="roller-hole" />
+        <circle cx="17" cy="50" r="2" class="roller-hole" />
+    </g>
+
+    <!-- Right Roller -->
+    <g class="roller" id="roller-right" style="transform-origin: 275px 50px;">
+        <circle cx="275" cy="50" r="12" class="roller-body" />
+        <circle cx="275" cy="42" r="2" class="roller-hole" />
+        <circle cx="275" cy="58" r="2" class="roller-hole" />
+        <circle cx="283" cy="50" r="2" class="roller-hole" />
+        <circle cx="267" cy="50" r="2" class="roller-hole" />
+    </g>
+
+    <!-- Movable Package -->
+    <g id="package-group" transform="translate(25, 15)">
+        <rect id="package-rect" x="0" y="0" width="30" height="25" rx="2" class="package-rect" />
+        <path d="M5 5 L25 20 M25 5 L5 20" stroke="rgba(255,255,255,0.3)" stroke-width="2" />
+    </g>
+
+    <script type="text/javascript">
+        //!export-start
+        let _pn_position = 0;
+        let _pn_weight = 0;
+        let _pb_active = false;
+        //!export-end
+
+        function putValue(id, value) {
+            if (id === '_pn_position') {
+                const pkg = document.getElementById('package-group');
+                if (pkg) {
+                    // Map 0-100 to 25px - 245px (track range)
+                    const x = 25 + (value * 2.2);
+                    pkg.setAttribute('transform', `translate(${x}, 15)`);
+                }
+            }
+            if (id === '_pn_weight') {
+                const rect = document.getElementById('package-rect');
+                if (rect) {
+                    // Change to Orange if weight detected
+                    rect.style.fill = (parseFloat(value) > 0) ? '#e67e22' : '#3498db';
+                }
+            }
+            if (id === '_pb_active') {
+                const rollers = document.querySelectorAll('.roller');
+                rollers.forEach(r => {
+                    r.style.animationPlayState = value ? 'running' : 'paused';
+                });
+            }
+        }
+
+        // FUXA Cleanup Logic
+        const svgId = 'fuxa_conveyor_01';
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.removedNodes.forEach((node) => {
+                    if (node.id === svgId) {
+                        observer.disconnect();
+                    }
+                });
+            });
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    </script>
+</svg>

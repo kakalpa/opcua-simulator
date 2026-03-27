@@ -63,26 +63,33 @@ async def build_hierarchy(parent_obj, structure, current_path=""):
             var_node = await parent_obj.add_variable(namespace_idx, name, ua.Variant(init_val, ua_type))
             await var_node.set_writable()
             
-            payload = {
+            nodes[path] = {
                 "node": var_node,
                 "type": data["type"],
                 "unit": data.get("unit", ""),
-                "sim": data.get("sim", {}),
+                "sim": data.get("sim", {}).copy(),
+                "base_sim": data.get("sim", {}).copy(),
                 "value": init_val,
                 "datatype": ua_type,
                 "alarm_state": "NORMAL"
             }
             if data["type"] == "slider":
-                payload["min"] = data.get("min", 0.0)
-                payload["max"] = data.get("max", 100.0)
-                
-            nodes[path] = payload
+                nodes[path]["min"] = data.get("min", 0.0)
+                nodes[path]["max"] = data.get("max", 100.0)
 
 def evaluate_rules_logic():
+    # Phase 1: Reset to Base State
     for path, data in nodes.items():
         data["multiplier"] = 1.0
+        if "base_sim" in data and data["type"] == "sensor":
+            current_val = data["sim"].get("current")
+            # Revert to base simulation profile
+            data["sim"] = data["base_sim"].copy()
+            # Preserve state across resets
+            if current_val is not None:
+                data["sim"]["current"] = current_val
 
-    # Sort rules by priority (default 0). Higher priority runs last to override.
+    # Phase 2: Apply Priority-Sorted Rules
     sorted_rules = sorted(rules_config, key=lambda x: x.get("priority", 0))
 
     for rule in sorted_rules:
@@ -92,10 +99,11 @@ def evaluate_rules_logic():
             
         cause_val = nodes[cause["node"]]["value"]
         
+        # Multiplier rules apply to the current active multiplier
         if cause.get("operator") == "multiplier":
             target = cause.get("target")
             if target in nodes:
-                nodes[target]["multiplier"] = float(cause_val) / 100.0
+                nodes[target]["multiplier"] *= (float(cause_val) / 100.0)
             continue
             
         condition = cause.get("condition")
@@ -108,6 +116,12 @@ def evaluate_rules_logic():
         elif condition == "<": triggered = (cause_val < target_val)
         elif condition == ">=": triggered = (cause_val >= target_val)
         elif condition == "<=": triggered = (cause_val <= target_val)
+        elif condition == "between":
+            try:
+                if isinstance(target_val, str) and "," in target_val:
+                    lower, upper = map(float, target_val.split(","))
+                    triggered = (lower <= float(cause_val) <= upper)
+            except: triggered = False
             
         if triggered:
             effect = rule.get("effect")
@@ -116,14 +130,12 @@ def evaluate_rules_logic():
             effect_path = effect["node"]
             
             if effect["action"] == "set_sim":
-                current_sim = nodes[effect_path].get("sim", {})
-                new_sim = effect["sim"]
-                # Only update if the simulation profile has actually changed
-                if current_sim.get("type") != new_sim.get("type") or \
-                   current_sim.get("min") != new_sim.get("min") or \
-                   current_sim.get("max") != new_sim.get("max") or \
-                   current_sim.get("value") != new_sim.get("value"):
-                    nodes[effect_path]["sim"] = new_sim.copy()
+                # Override the simulation profile
+                # Preserve state when overriding
+                curr_val = nodes[effect_path]["sim"].get("current")
+                nodes[effect_path]["sim"] = effect["sim"].copy()
+                if curr_val is not None:
+                    nodes[effect_path]["sim"]["current"] = curr_val
 
 async def opcua_server_task():
     global server_obj, namespace_idx, my_evgen
@@ -198,6 +210,23 @@ async def opcua_server_task():
                                 new_val = (math.tan(t * math.pi / period)) * multiplier
                                 # Clamp tan to avoid infinity
                                 new_val = max(-1000.0, min(new_val, 1000.0))
+                            elif sim.get("type") == "thermal":
+                                current = sim.get("current", data.get("value", sim.get("min", 0.0)))
+                                gain = sim.get("gain", 1.0)
+                                drift = sim.get("drift", 0.0)
+                                min_val = sim.get("min", 0.0)
+                                max_val = sim.get("max", 100.0)
+                                delta = (gain * multiplier) + drift
+                                
+                                if sim.get("wrap", False) and max_val > min_val:
+                                    # Looping/Wrapping logic (Sawtooth)
+                                    new_val = ((current - min_val + delta) % (max_val - min_val)) + min_val
+                                else:
+                                    # Accumulation with clipping
+                                    new_val = current + delta
+                                    new_val = max(min_val, min(new_val, max_val))
+                                    
+                                sim["current"] = new_val
 
                             if new_val is not None:
                                 await data["node"].write_value(ua.Variant(round(new_val, 3), data["datatype"]))
@@ -310,6 +339,8 @@ def add_node():
         period_val = float(data.get("period", 60.0))
         sim_type = data.get("sim_type", "constant")
         init_val = float(data.get("value", 0.0)) if node_type != "switch" else bool(data.get("value", False))
+        gain_val = float(data.get("gain", 1.0))
+        drift_val = float(data.get("drift", 0.0))
     except ValueError:
         return jsonify({"success": False, "error": "Numeric fields must be valid numbers"}), 400
 
@@ -331,10 +362,11 @@ def add_node():
     else:
         node_data["datatype"] = "Double"
         node_data["unit"] = unit
-        
     if node_type == "sensor":
         node_data["sim"] = {
-            "type": sim_type, "min": min_val, "max": max_val, "period": period_val, "current": init_val
+            "type": sim_type, "min": min_val, "max": max_val, "period": period_val, 
+            "current": init_val, "gain": gain_val, "drift": drift_val,
+            "wrap": bool(data.get("wrap", False))
         }
     elif node_type == "slider":
         node_data["min"] = min_val
@@ -498,14 +530,20 @@ def edit_node():
             if "min" in node_config["sim"]: node_sim["min"] = node_config["sim"]["min"]
             if "max" in node_config["sim"]: node_sim["max"] = node_config["sim"]["max"]
             if "current" in node_config["sim"]: node_sim["current"] = node_config["sim"]["current"]
+            if "gain" in node_config["sim"]: node_sim["gain"] = node_config["sim"]["gain"]
+            if "drift" in node_config["sim"]: node_sim["drift"] = node_config["sim"]["drift"]
             
         # Or fetch from data
         if "min" in data and data["min"] != "": node_sim["min"] = float(data["min"])
         if "max" in data and data["max"] != "": node_sim["max"] = float(data["max"])
         if "value" in data and data["value"] != "": node_sim["value"] = float(data["value"])
+        if "gain" in data and data["gain"] != "": node_sim["gain"] = float(data["gain"])
+        if "drift" in data and data["drift"] != "": node_sim["drift"] = float(data["drift"])
+        if "wrap" in data: node_sim["wrap"] = bool(data["wrap"])
             
         node_config["sim"] = node_sim
-        nodes[path]["sim"] = node_sim
+        nodes[path]["sim"] = node_sim.copy()
+        nodes[path]["base_sim"] = node_sim.copy()
         
         # Immediate value assignment for constant types
         if sim_type == "constant" and "value" in node_sim:

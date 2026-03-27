@@ -121,6 +121,22 @@
         .rule-drag-handle { cursor: grab; color: var(--text-muted); padding-right: 0.75rem; font-size: 1.2rem; }
         .rule-drag-handle:active { cursor: grabbing; }
         .sortable-ghost { opacity: 0.4; border: 1px dashed var(--accent); }
+
+        /* Custom Suggestions Dropdown */
+        .suggestions-wrapper { position: relative; }
+        .suggestions-dropdown { 
+            position: absolute; top: 100%; left: 0; right: 0; z-index: 1000; 
+            max-height: 250px; overflow-y: auto; background: #1e293b; 
+            border: 1px solid var(--accent); border-radius: 8px; margin-top: 4px; 
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); display: none;
+            backdrop-filter: blur(8px);
+        }
+        .suggestion-item { 
+            padding: 0.6rem 1rem; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.05); 
+            font-size: 0.9rem; transition: background 0.2s;
+        }
+        .suggestion-item:last-child { border-bottom: none; }
+        .suggestion-item:hover { background: rgba(59, 130, 246, 0.2); color: var(--accent); }
     </style>
 </head>
 <body>
@@ -143,9 +159,10 @@
             
             <div class="form-section">
                 <div class="form-row">
-                    <div style="flex-grow: 1; min-width: 200px;">
+                    <div style="flex-grow: 1; min-width: 200px;" class="suggestions-wrapper">
                         <label>Folder (e.g. PlantA/Boiler)</label>
-                        <input type="text" id="new-folder" placeholder="Leave empty for root" class="input-field">
+                        <input type="text" id="new-folder" placeholder="Leave empty for root" class="input-field" autocomplete="off">
+                        <div id="folder-suggestions" class="suggestions-dropdown"></div>
                     </div>
                     <div style="flex-grow: 1; min-width: 200px;">
                         <label>Node Name (e.g., Temp, Valve)</label>
@@ -171,7 +188,23 @@
                             <option value="tan">Tangent Wave</option>
                             <option value="random">Random Walk</option>
                             <option value="constant">Constant Bias</option>
+                            <option value="thermal">Thermal Accumulator</option>
                         </select>
+                    </div>
+
+                    <div class="param-group config-for-sensor" id="grp-thermal" style="width: 210px; display: none; gap: 10px;">
+                        <div style="flex:1">
+                            <label>Gain (Rate)</label>
+                            <input type="number" id="new-gain" value="1.0" step="0.1" class="input-field">
+                        </div>
+                        <div style="flex:1">
+                            <label>Drift</label>
+                            <input type="number" id="new-drift" value="0.0" step="0.1" class="input-field" title="Natural drift towards ambient">
+                        </div>
+                        <div style="width: 60px; text-align: center;">
+                            <label>Loop</label>
+                            <input type="checkbox" id="new-wrap" style="width: 20px; height: 20px; margin-top: 8px;">
+                        </div>
                     </div>
 
                     <div class="param-group config-for-sensor config-for-slider" style="width: 100px; display: block;">
@@ -241,12 +274,13 @@
                             <option value=">=">Greater/Equal (>=)</option>
                             <option value="<">Less than (<)</option>
                             <option value="<=">Less/Equal (<=)</option>
+                            <option value="between">InRange (e.g. 2,8)</option>
                             <option value="multiplier">Use as Multiplier</option>
                         </select>
                     </div>
                     <div style="width: 150px;" id="rule-cause-val-grp">
-                        <label>Target Value</label>
-                        <input type="text" id="rule-cause-val" class="input-field" placeholder="e.g. true or 50">
+                        <label id="rule-val-label">Target Value</label>
+                        <input type="text" id="rule-cause-val" class="input-field" placeholder="e.g. true or 5.0,9.0">
                     </div>
                     <div style="width: 100px;">
                         <label>Priority</label>
@@ -271,7 +305,19 @@
                             <option value="sin">Sine Wave</option>
                             <option value="random">Random Walk</option>
                             <option value="constant">Constant Bias</option>
+                            <option value="thermal">Thermal Accumulator</option>
                         </select>
+                    </div>
+                    
+                    <div id="rule-thermal-grp" style="display: none; width: 210px; gap: 10px;">
+                        <div style="flex:1">
+                            <label>Gain</label>
+                            <input type="number" id="rule-sim-gain" class="input-field" value="1.0" step="0.1">
+                        </div>
+                        <div style="flex:1">
+                            <label>Drift</label>
+                            <input type="number" id="rule-sim-drift" class="input-field" value="0.0" step="0.1">
+                        </div>
                     </div>
                     <div style="width: 100px;">
                         <label>Min</label>
@@ -437,7 +483,10 @@
             const endpoint = editingPath ? '/api/edit_node' : '/api/add_node';
             const reqBody = { 
                 folder, name, node_type, unit, sim_type, 
-                min: min_val, max: max_val, period: period, value: val 
+                min: min_val, max: max_val, period: period, value: val,
+                gain: parseFloat(document.getElementById('new-gain').value || 1.0),
+                drift: parseFloat(document.getElementById('new-drift').value || 0.0),
+                wrap: document.getElementById('new-wrap').checked
             };
             if (editingPath) reqBody.path = editingPath;
             
@@ -482,9 +531,34 @@
             } catch (err) { }
         }
 
+        let lastFolderString = "";
         function renderDashboard(data) {
             window.currentNodesData = data;
             populateRuleDropdowns(data);
+            
+            // Collect all unique folder paths
+            const folderSet = new Set();
+            for (const path in data) {
+                const parts = path.split('/');
+                parts.pop(); // remove node name
+                if (parts.length > 0) {
+                    let cumulative = "";
+                    parts.forEach(p => {
+                        cumulative = cumulative ? `${cumulative}/${p}` : p;
+                        folderSet.add(cumulative);
+                    });
+                }
+            }
+            
+            const currentFolders = Array.from(folderSet).sort();
+            const folderString = currentFolders.join('|');
+            
+            // Only rebuild if the folder structure changed (to avoid flickering)
+            if (folderString !== lastFolderString) {
+                lastFolderString = folderString;
+                window.allFolders = currentFolders;
+            }
+
             // Group by folder path
             const grouped = {};
             for (const [path, info] of Object.entries(data)) {
@@ -854,11 +928,24 @@
             }
         });
 
+        document.getElementById('new-sim-type').addEventListener('change', (e) => {
+            const isThermal = e.target.value === 'thermal';
+            document.getElementById('grp-period').style.display = (e.target.value === 'sin' || e.target.value === 'tan') ? 'block' : 'none';
+            document.getElementById('grp-thermal').style.display = isThermal ? 'flex' : 'none';
+            document.getElementById('lbl-min').textContent = isThermal ? 'Low Limit' : 'Min Bounds';
+            document.getElementById('lbl-max').textContent = isThermal ? 'High Limit' : 'Max Bounds';
+        });
+
         document.getElementById('rule-sim-type').addEventListener('change', (e) => {
             if(e.target.value === 'constant') {
                 document.getElementById('rule-sim-period-grp').style.display = 'none';
+                document.getElementById('rule-thermal-grp').style.display = 'none';
+            } else if(e.target.value === 'thermal') {
+                document.getElementById('rule-sim-period-grp').style.display = 'none';
+                document.getElementById('rule-thermal-grp').style.display = 'flex';
             } else {
                 document.getElementById('rule-sim-period-grp').style.display = 'block';
+                document.getElementById('rule-thermal-grp').style.display = 'none';
             }
         });
         
@@ -905,7 +992,9 @@
                             type: simType, 
                             min: parseFloat(document.getElementById('rule-sim-min').value), 
                             max: parseFloat(document.getElementById('rule-sim-max').value), 
-                            period: parseFloat(document.getElementById('rule-sim-period').value) 
+                            period: parseFloat(document.getElementById('rule-sim-period').value),
+                            gain: parseFloat(document.getElementById('rule-sim-gain').value || 1.0),
+                            drift: parseFloat(document.getElementById('rule-sim-drift').value || 0.0)
                         } 
                     }
                 };
@@ -923,6 +1012,45 @@
                 errDiv.textContent = e.message; errDiv.style.display = 'block';
             }
             btn.disabled = false; btn.textContent = 'Add Logic Rule';
+        });
+
+        /* Custom Suggestions Logic */
+        const folderInput = document.getElementById('new-folder');
+        const suggestionsBox = document.getElementById('folder-suggestions');
+
+        function showFolderSuggestions(filter = "") {
+            if (!window.allFolders) return;
+            const filtered = window.allFolders.filter(f => f.toLowerCase().includes(filter.toLowerCase()));
+            
+            if (filtered.length === 0) {
+                suggestionsBox.style.display = 'none';
+                return;
+            }
+            
+            suggestionsBox.innerHTML = '';
+            filtered.forEach(f => {
+                const item = document.createElement('div');
+                item.className = 'suggestion-item';
+                item.textContent = f;
+                item.onclick = () => selectFolder(f);
+                suggestionsBox.appendChild(item);
+            });
+            suggestionsBox.style.display = 'block';
+        }
+
+        function selectFolder(folder) {
+            folderInput.value = folder;
+            suggestionsBox.style.display = 'none';
+        }
+
+        folderInput.addEventListener('input', (e) => showFolderSuggestions(e.target.value));
+        folderInput.addEventListener('focus', () => showFolderSuggestions(folderInput.value));
+        
+        // Close when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!folderInput.contains(e.target) && !suggestionsBox.contains(e.target)) {
+                suggestionsBox.style.display = 'none';
+            }
         });
 
         setInterval(fetchData, 1000);

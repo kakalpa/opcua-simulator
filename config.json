@@ -149,6 +149,45 @@
           }
         }
       }
+    },
+    "ConveyorLine": {
+      "type": "folder",
+      "children": {
+        "BeltPosition": {
+          "type": "sensor",
+          "datatype": "Double",
+          "unit": "m",
+          "sim": {
+            "type": "thermal",
+            "period": 10.0,
+            "min": 0.0,
+            "max": 100.0,
+            "gain": 1.0,
+            "value": 0.0,
+            "drift": 0.0,
+            "wrap": true
+          },
+          "min": 0.0,
+          "max": 100.0
+        },
+        "MotorSpeed": {
+          "type": "slider",
+          "datatype": "Double",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0,
+          "value": 50.0
+        },
+        "BeltWeight": {
+          "type": "sensor",
+          "datatype": "Double",
+          "unit": "kg",
+          "sim": {
+            "type": "constant",
+            "value": 0.0
+          }
+        }
+      }
     }
   },
   "rules": [
@@ -282,6 +321,30 @@
         "node": "DemonstrationPlant/MainBoiler/SafetyValve",
         "operator": "multiplier",
         "target": "DemonstrationPlant/MainBoiler/Pressure"
+      }
+    },
+    {
+      "priority": 0,
+      "cause": {
+        "node": "ConveyorLine/MotorSpeed",
+        "operator": "multiplier",
+        "target": "ConveyorLine/BeltPosition"
+      }
+    },
+    {
+      "priority": 0,
+      "cause": {
+        "node": "ConveyorLine/BeltPosition",
+        "condition": "between",
+        "value": "3.0,7.0"
+      },
+      "effect": {
+        "node": "ConveyorLine/BeltWeight",
+        "action": "set_sim",
+        "sim": {
+          "type": "constant",
+          "value": 12.5
+        }
       }
     }
   ],

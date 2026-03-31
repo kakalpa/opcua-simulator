@@ -5,3 +5,5 @@ __pycache__/
 .idea/
 .vscode/
 opcua-simulator.service
+*.bak
+*.log

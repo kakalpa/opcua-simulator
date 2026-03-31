@@ -14,23 +14,50 @@ load_dotenv()
 FLASK_PORT = int(os.environ.get('FLASK_PORT', 8080))
 OPC_UA_PORT = int(os.environ.get('OPC_UA_PORT', 4840))
 
+import db
+
 # Load config relative to script location
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
+db.DB_FILE = os.path.join(BASE_DIR, 'opcua_config.db')
+db.CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
+db.migrate_if_needed()
 
 app = Flask(__name__, 
             template_folder=os.path.join(BASE_DIR, 'templates'),
             static_folder=os.path.join(BASE_DIR, 'static'))
 
-if os.path.exists(CONFIG_FILE):
-    with open(CONFIG_FILE, 'r') as f:
-        config = json.load(f)
-else:
-    config = {"hierarchy": {}, "rules": [], "alarms": []}
+config = {
+    "hierarchy": db.get_hierarchy(),
+    "rules": db.get_rules(),
+    "alarms": db.get_alarms()
+}
 
 # Ensure rules and alarms are initialized correctly
 if "rules" not in config: config["rules"] = []
 if "alarms" not in config: config["alarms"] = []
+
+# Helper function to update node value dynamically back to config and DB
+def _update_node_value_in_config(path, val):
+    parts = path.split("/")
+    name = parts[-1]
+    current_level = config["hierarchy"]
+    for p in parts[:-1]:
+        if p in current_level and "children" in current_level[p]:
+            current_level = current_level[p]["children"]
+        else:
+            return # Hierarchy path broken
+            
+    if name in current_level:
+        node_config = current_level[name]
+        node_type = node_config.get("type")
+        if node_type in ["slider", "switch"]:
+            node_config["value"] = val
+        elif node_type == "sensor" and node_config.get("sim", {}).get("type") == "constant":
+            node_config.setdefault("sim", {})["value"] = val
+        else:
+            node_config["value"] = val
+            
+        db.update_node(path, name, "/".join(parts[:-1]), False, node_config)
 
 nodes = {} # Key: "Folder/NodeName"
 folders_cache = {} # Key: "Folder/Path"
@@ -70,6 +97,7 @@ async def build_hierarchy(parent_obj, structure, current_path=""):
                 "sim": data.get("sim", {}).copy(),
                 "base_sim": data.get("sim", {}).copy(),
                 "value": init_val,
+                "last_written_value": init_val,
                 "datatype": ua_type,
                 "alarm_state": "NORMAL"
             }
@@ -172,6 +200,22 @@ async def opcua_server_task():
                             data = nodes.get(path)
                             if not data or "node" not in data: continue
                             val = await data["node"].read_value()
+                            
+                            # Check for external writes by comparing with the last value we set
+                            last_val = data.get("last_written_value")
+                            if last_val is not None and val != last_val:
+                                logging.info(f"External write captured on {path}: {last_val} -> {val}")
+                                node_type = data.get("type")
+                                sim_type = data.get("sim", {}).get("type")
+                                
+                                # Make the manually written value persist if it's meant to be static
+                                if node_type in ["slider", "switch"] or sim_type == "constant":
+                                    data.setdefault("base_sim", {})["value"] = val
+                                    data.setdefault("sim", {})["value"] = val
+                                    _update_node_value_in_config(path, val)
+                                
+                                data["last_written_value"] = val
+                                
                             data["value"] = val
                         except Exception as e:
                             logging.error(f"Error reading node {path}: {e}")
@@ -238,6 +282,7 @@ async def opcua_server_task():
                                 
                                 await data["node"].write_value(ua.Variant(final_val, data["datatype"]))
                                 data["value"] = final_val
+                                data["last_written_value"] = final_val
                         except Exception as e:
                             logging.error(f"Error simulating node {path}: {e}")
 
@@ -319,6 +364,16 @@ def set_value():
                 node_payload["node"].write_value(ua_val), loop
             )
             node_payload["value"] = val
+            node_payload["last_written_value"] = val
+            
+            # Immediately persist to config and DB if appropriate
+            node_type = node_payload.get("type")
+            sim_type = node_payload.get("sim", {}).get("type")
+            if node_type in ["slider", "switch"] or sim_type == "constant":
+                node_payload.setdefault("base_sim", {})["value"] = val
+                node_payload.setdefault("sim", {})["value"] = val
+                _update_node_value_in_config(path, val)
+
             return jsonify({"success": True})
         except ValueError:
              return jsonify({"success": False, "error": "Invalid value format"}), 400
@@ -404,7 +459,9 @@ def add_node():
             "type": node_data["type"],
             "unit": node_data.get("unit", ""),
             "sim": node_data.get("sim", {}),
+            "base_sim": node_data.get("sim", {}).copy(),
             "value": init_val,
+            "last_written_value": init_val,
             "datatype": ua_type,
             "alarm_state": "NORMAL"
         }
@@ -420,8 +477,20 @@ def add_node():
         
         # Injection succeeded, save to config
         current_level[name] = node_data
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=2)
+        
+        # Save explicit node and walk the hierarchy to save implicit parent folders to DB
+        db.update_node(full_path, name, folder_path, False, node_data)
+        
+        current_path_built = ""
+        level_cursor = config["hierarchy"]
+        for p in parts:
+            parent_built = current_path_built
+            current_path_built = f"{current_path_built}/{p}" if current_path_built else p
+            if p in level_cursor:
+                # Upsert the folder
+                folder_data = {k: v for k, v in level_cursor[p].items() if k != "children"}
+                db.update_node(current_path_built, p, parent_built, True, folder_data)
+                level_cursor = level_cursor[p].get("children", {})
             
         return jsonify({"success": True})
     except Exception as e:
@@ -556,8 +625,7 @@ def edit_node():
         if sim_type == "constant" and "value" in node_sim:
             nodes[path]["value"] = node_sim["value"]
             
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=2)
+    db.update_node(path, name, "/".join(parts[:-1]), False, node_config)
         
     return jsonify({"success": True})
 
@@ -590,8 +658,7 @@ def delete_node():
         return jsonify({"success": False, "error": "Node not in config"}), 500
         
     del folder_level[name]
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=2)
+    db.delete_node(path)
         
     del nodes[path]
     return jsonify({"success": True})
@@ -617,8 +684,7 @@ def add_rule():
     if rules_config is not config["rules"]:
         rules_config.append(new_rule)
         
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=2)
+    db.save_rules(config["rules"])
         
     return jsonify({"success": True})
 
@@ -637,8 +703,7 @@ def delete_rule():
     if rules_config is not config.get("rules"):
         rules_config.pop(index)
         
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=2)
+    db.save_rules(config["rules"])
         
     return jsonify({"success": True})
 
@@ -659,8 +724,7 @@ def update_rules():
     # Update the live reference as well (shared with simulation loop)
     rules_config[:] = new_rules
     
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=2)
+    db.save_rules(config["rules"])
         
     return jsonify({"success": True})
 
@@ -691,8 +755,19 @@ def load_demo():
         # If they were somehow already the same list, we don't need to extend twice.
         # But we already did extend config["rules"] which IS rules_config.
         
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=2)
+        def insert_demo_to_db(d, parent_path=""):
+            for child_name, child_data in d.items():
+                child_path = f"{parent_path}/{child_name}" if parent_path else child_name
+                is_folder = child_data.get("type") == "folder"
+                config_only = {k: v for k, v in child_data.items() if k != "children"}
+                db.update_node(child_path, child_name, parent_path, is_folder, config_only)
+                if "children" in child_data:
+                    insert_demo_to_db(child_data["children"], child_path)
+                    
+        insert_demo_to_db({"DemonstrationPlant": config["hierarchy"]["DemonstrationPlant"]})
+        
+        db.save_rules(config["rules"])
+        db.save_alarms(config["alarms"])
             
         return jsonify({"success": True})
     except Exception as e:

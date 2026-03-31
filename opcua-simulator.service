@@ -1,0 +1,17 @@
+[Unit]
+Description=OPC UA Python Simulation Server
+After=network.target
+
+[Service]
+User=kalpa
+Group=kalpa
+WorkingDirectory=/home/kalpa/Documents/Projects/opcua
+ExecStart=/home/kalpa/Documents/Projects/opcua/venv/bin/python app.py
+Restart=always
+RestartSec=3
+
+StandardOutput=append:/home/kalpa/Documents/Projects/opcua/simulator.log
+StandardError=append:/home/kalpa/Documents/Projects/opcua/simulator.log
+
+[Install]
+WantedBy=multi-user.target

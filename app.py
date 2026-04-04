@@ -75,7 +75,8 @@ async def build_hierarchy(parent_obj, structure, current_path=""):
         path = f"{current_path}/{name}" if current_path else name
         
         if data["type"] == "folder":
-            folder = await parent_obj.add_folder(namespace_idx, name)
+            node_id = ua.NodeId(path, namespace_idx)
+            folder = await parent_obj.add_folder(node_id, name)
             folders_cache[path] = folder
             await build_hierarchy(folder, data.get("children", {}), path)
         else:
@@ -87,7 +88,8 @@ async def build_hierarchy(parent_obj, structure, current_path=""):
                 init_val = data.get("value", False)
                 ua_type = ua.VariantType.Boolean
                 
-            var_node = await parent_obj.add_variable(namespace_idx, name, ua.Variant(init_val, ua_type))
+            node_id = ua.NodeId(path, namespace_idx)
+            var_node = await parent_obj.add_variable(node_id, name, ua.Variant(init_val, ua_type))
             await var_node.set_writable()
             
             nodes[path] = {
@@ -177,7 +179,9 @@ async def opcua_server_task():
     uri = "http://simulator.local"
     namespace_idx = await server.register_namespace(uri)
     objects = server.nodes.objects
-    server_obj = await objects.add_object(namespace_idx, "SimulatorFactory")
+    
+    server_obj_id = ua.NodeId("SimulatorFactory", namespace_idx)
+    server_obj = await objects.add_object(server_obj_id, "SimulatorFactory")
     
     my_evgen = await server.get_event_generator()
     
@@ -443,7 +447,8 @@ def add_node():
         for p in parts:
             current_path = f"{current_path}/{p}" if current_path else p
             if current_path not in folders_cache:
-                folder = await parent_obj.add_folder(namespace_idx, p)
+                node_id = ua.NodeId(current_path, namespace_idx)
+                folder = await parent_obj.add_folder(node_id, p)
                 folders_cache[current_path] = folder
                 parent_obj = folder
             else:
@@ -451,7 +456,8 @@ def add_node():
                 
         # Now add the variable
         ua_type = getattr(ua.VariantType, node_data["datatype"])
-        var_node = await parent_obj.add_variable(namespace_idx, name, ua.Variant(init_val, ua_type))
+        node_id = ua.NodeId(full_path, namespace_idx)
+        var_node = await parent_obj.add_variable(node_id, name, ua.Variant(init_val, ua_type))
         await var_node.set_writable()
         
         payload = {
